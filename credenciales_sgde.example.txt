@@ -1,0 +1,15 @@
+# Copia este archivo, renombralo a "credenciales_sgde.txt" (sin ".example")
+# y reemplaza los valores de abajo con los tuyos.
+#
+# GMAIL_APP_PASSWORD NO es tu contrasena normal de Gmail. Es una
+# "Contrasena de aplicacion" que Google genera aparte. Para crearla:
+#   1. Activa la verificacion en 2 pasos en https://myaccount.google.com/security
+#   2. Ve a https://myaccount.google.com/apppasswords
+#   3. Crea una nueva, ponle un nombre (ej. "SGDE") y copia el codigo de 16 letras.
+#
+# El archivo "credenciales_sgde.txt" (ya con tus datos reales) NUNCA se debe
+# subir a GitHub. El .gitignore de este repositorio ya esta configurado para
+# ignorarlo.
+
+GMAIL_USUARIO=tu_correo@gmail.com
+GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
