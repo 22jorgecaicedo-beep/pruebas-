@@ -8,10 +8,15 @@ te comparte un expediente. Cuando encuentra uno nuevo:
   1. Abre el link del correo con un navegador automatizado.
   2. Escribe tu correo en el formulario de validacion.
   3. Espera el segundo correo con el "token" de 6 digitos y lo escribe.
-  4. Descarga cada elemento de la tabla "Elementos Compartidos".
+  4. Descarga cada elemento de la tabla "Elementos Compartidos". Si una
+     fila tiene flecha de descarga, se descarga directo. Si es una
+     carpeta sin flecha (por ejemplo, muy pesada para empaquetarse en el
+     portal), el script entra a esa carpeta y descarga cada archivo uno
+     por uno, reconstruyendo la misma estructura de subcarpetas.
+  5. Arma un unico .zip con todo lo descargado para ese expediente.
 
-Los archivos descargados caen en la misma carpeta que vigila
-`organizador_zips.py`, asi que ese script los extrae y organiza solo.
+Ese .zip cae en la misma carpeta que vigila `organizador_zips.py`, asi
+que ese script lo extrae y organiza solo.
 
 IMPORTANTE:
   - Las credenciales de Gmail se leen de `credenciales_sgde.txt` (NO de
@@ -29,7 +34,9 @@ import imaplib
 import logging
 import os
 import re
+import shutil
 import time
+import zipfile
 from email.header import decode_header
 from pathlib import Path
 
@@ -62,6 +69,15 @@ NAVEGADOR_VISIBLE = True
 
 ARCHIVO_PROCESADOS = os.path.join(os.path.dirname(__file__), "expedientes_procesados.txt")
 ARCHIVO_LOG = os.path.join(organizador.CARPETA_DESTINO, "descargador_sgde.log")
+
+# Carpeta de trabajo donde se reconstruye la estructura de carpetas/archivos
+# cuando hay que descargar uno por uno (caso sin flecha de descarga directa).
+CARPETA_TEMP_DESCARGAS = os.path.join(os.path.dirname(__file__), "_tmp_descargas_sgde")
+
+# Cuantas veces reintentar un clic de descarga que no dispara nada, antes de
+# darlo por fallido (a veces la pagina tarda en renderizar el icono).
+INTENTOS_POR_DESCARGA = 2
+TIMEOUT_DESCARGA_MS = 30000
 
 # ===========================================================================
 
@@ -187,6 +203,151 @@ def esperar_token(conexion, expediente: str):
     return None
 
 
+def _nombre_fila(fila) -> str:
+    try:
+        return fila.locator("td").nth(0).inner_text().strip()
+    except Exception:
+        return "elemento"
+
+
+def _celda_tiene_control_descarga(celda) -> bool:
+    """Detecta si una celda (Acciones o Anexos) tiene algo clicable para descargar."""
+    try:
+        return celda.locator("svg, img, a, button, [role='button'], [class*='download']").count() > 0
+    except Exception:
+        return False
+
+
+def _fila_es_carpeta(fila) -> bool:
+    """El icono de carpeta amarilla en la columna Nombre indica que hay que entrar, no descargar."""
+    try:
+        celda_nombre = fila.locator("td").nth(0)
+        return celda_nombre.locator("svg, img, [class*='folder']").count() > 0
+    except Exception:
+        return False
+
+
+def _descargar_celda(pagina, celda, carpeta_local: str, nombre_base: str) -> bool:
+    """Intenta hacer clic en el control de descarga de una celda y guarda el archivo."""
+    for intento in range(1, INTENTOS_POR_DESCARGA + 1):
+        try:
+            with pagina.expect_download(timeout=TIMEOUT_DESCARGA_MS) as info_descarga:
+                celda.locator("svg, img, a, button, [role='button']").first.click()
+            descarga = info_descarga.value
+            nombre_archivo = descarga.suggested_filename or organizador.sanear_nombre(nombre_base)
+            ruta_destino = os.path.join(carpeta_local, nombre_archivo)
+            descarga.save_as(ruta_destino)
+            logging.info("Descargado: %s", ruta_destino)
+            return True
+        except Exception as exc:
+            logging.warning(
+                "Intento %s/%s fallido descargando '%s': %s", intento, INTENTOS_POR_DESCARGA, nombre_base, exc
+            )
+    return False
+
+
+def descargar_elementos_de_tabla(pagina, carpeta_local: str) -> int:
+    """
+    Recorre todas las filas (y paginas) de la tabla actual de 'Elementos
+    Compartidos'. Si una fila tiene flecha de descarga, descarga el archivo
+    ahi mismo. Si es una carpeta sin flecha de descarga directa, entra a
+    ella y repite el proceso (recursivo), reconstruyendo la misma
+    estructura de subcarpetas en disco. Devuelve cuantos archivos se
+    lograron descargar en total.
+    """
+    pagina.wait_for_selector("table:visible tbody tr", timeout=15000)
+    descargas_totales = 0
+
+    while True:  # recorre todas las paginas de la tabla (paginacion)
+        filas = pagina.locator("table:visible tbody tr")
+        total_filas = filas.count()
+
+        for i in range(total_filas):
+            fila = filas.nth(i)
+            nombre = _nombre_fila(fila)
+            celda_acciones = fila.locator("td").nth(3)
+            celda_anexos = fila.locator("td").nth(4) if fila.locator("td").count() > 4 else None
+
+            if _celda_tiene_control_descarga(celda_acciones):
+                if _descargar_celda(pagina, celda_acciones, carpeta_local, nombre):
+                    descargas_totales += 1
+
+            elif _fila_es_carpeta(fila):
+                logging.info("'%s' no tiene descarga directa; entrando a la carpeta...", nombre)
+                subcarpeta = os.path.join(carpeta_local, organizador.sanear_nombre(nombre))
+                os.makedirs(subcarpeta, exist_ok=True)
+                try:
+                    fila.locator("td").nth(0).click()
+                    descargas_totales += descargar_elementos_de_tabla(pagina, subcarpeta)
+                finally:
+                    # volver al listado anterior para seguir con la siguiente fila
+                    boton_regresar = pagina.get_by_role("button", name=re.compile("regresar", re.IGNORECASE))
+                    if boton_regresar.count() > 0:
+                        boton_regresar.first.click()
+                    else:
+                        pagina.go_back()
+                    pagina.wait_for_selector("table:visible tbody tr", timeout=15000)
+                    # las filas ya no son validas tras navegar; se vuelven a
+                    # leer en la siguiente vuelta del for con "filas" recargado
+                    filas = pagina.locator("table:visible tbody tr")
+
+            else:
+                logging.warning(
+                    "No se encontro forma de descargar '%s' (sin flecha ni carpeta). Revisa manualmente.", nombre
+                )
+
+            if celda_anexos is not None and _celda_tiene_control_descarga(celda_anexos):
+                _descargar_celda(pagina, celda_anexos, carpeta_local, f"{nombre}_anexo")
+
+        boton_siguiente = pagina.locator("button[aria-label='Next Page']")
+        if boton_siguiente.count() > 0 and boton_siguiente.first.is_enabled():
+            boton_siguiente.first.click()
+            pagina.wait_for_timeout(500)
+        else:
+            break
+
+    return descargas_totales
+
+
+def _comprimir_carpeta(carpeta_origen: str, ruta_zip_destino: str):
+    with zipfile.ZipFile(ruta_zip_destino, "w", zipfile.ZIP_DEFLATED) as zf:
+        for raiz, _dirs, archivos in os.walk(carpeta_origen):
+            for nombre_archivo in archivos:
+                ruta_completa = os.path.join(raiz, nombre_archivo)
+                ruta_relativa = os.path.relpath(ruta_completa, carpeta_origen)
+                zf.write(ruta_completa, ruta_relativa)
+
+
+def _ruta_zip_disponible(carpeta_padre: str, nombre_base: str) -> str:
+    ruta = os.path.join(carpeta_padre, f"{nombre_base}.zip")
+    contador = 2
+    while os.path.exists(ruta):
+        ruta = os.path.join(carpeta_padre, f"{nombre_base}_{contador}.zip")
+        contador += 1
+    return ruta
+
+
+def _armar_zip_para_organizador(carpeta_temp: str, expediente: str) -> str:
+    """
+    Deja en CARPETA_DESCARGAS un unico .zip listo para que
+    organizador_zips.py lo procese, ya sea:
+      - moviendo directamente el zip si solo se descargo un archivo y ya
+        era un .zip (caso normal, flecha de descarga disponible), o
+      - comprimiendo toda la estructura reconstruida (caso de carpetas
+        sin flecha, descargadas archivo por archivo).
+    """
+    contenidos = os.listdir(carpeta_temp)
+    if len(contenidos) == 1 and contenidos[0].lower().endswith(".zip"):
+        origen = os.path.join(carpeta_temp, contenidos[0])
+        destino = _ruta_zip_disponible(CARPETA_DESCARGAS, expediente)
+        shutil.move(origen, destino)
+        return destino
+
+    destino = _ruta_zip_disponible(CARPETA_DESCARGAS, expediente)
+    _comprimir_carpeta(carpeta_temp, destino)
+    return destino
+
+
 def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str, conexion_imap):
     logging.info("Abriendo portal para expediente %s", expediente)
     pagina.goto(link, wait_until="networkidle")
@@ -205,29 +366,23 @@ def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str
     pagina.get_by_role("button", name=re.compile("validar", re.IGNORECASE)).click()
     pagina.wait_for_selector("text=Elementos Compartidos")
 
-    flechas_descarga = pagina.locator("table [class*=download], table svg, table a").all()
-    descargas_realizadas = 0
-    filas = pagina.locator("table tbody tr")
-    total_filas = filas.count()
-    for i in range(total_filas):
-        fila = filas.nth(i)
-        try:
-            with pagina.expect_download(timeout=30000) as info_descarga:
-                fila.locator("td:last-child, td >> nth=-1").locator("*").first.click()
-            descarga = info_descarga.value
-            nombre_sugerido = descarga.suggested_filename or f"{expediente}_{i}.zip"
-            ruta_destino = os.path.join(CARPETA_DESCARGAS, nombre_sugerido)
-            descarga.save_as(ruta_destino)
-            logging.info("Descargado: %s", ruta_destino)
-            descargas_realizadas += 1
-        except Exception as exc:
-            logging.warning("No se pudo descargar la fila %s del expediente %s: %s", i, expediente, exc)
+    carpeta_temp = os.path.join(CARPETA_TEMP_DESCARGAS, expediente)
+    if os.path.exists(carpeta_temp):
+        shutil.rmtree(carpeta_temp)
+    os.makedirs(carpeta_temp, exist_ok=True)
 
-    if descargas_realizadas == 0:
-        raise RuntimeError(
-            f"No se descargo ningun archivo para el expediente {expediente}. "
-            "Es posible que la pagina haya cambiado de estructura; revisa manualmente."
-        )
+    try:
+        descargas_totales = descargar_elementos_de_tabla(pagina, carpeta_temp)
+        if descargas_totales == 0:
+            raise RuntimeError(
+                f"No se descargo ningun archivo para el expediente {expediente}. "
+                "Es posible que la pagina haya cambiado de estructura; revisa manualmente."
+            )
+        ruta_final = _armar_zip_para_organizador(carpeta_temp, expediente)
+        logging.info("Zip listo para el organizador: %s", ruta_final)
+    finally:
+        if os.path.exists(carpeta_temp):
+            shutil.rmtree(carpeta_temp, ignore_errors=True)
 
 
 def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):
@@ -261,6 +416,7 @@ def main():
     configurar_logging()
     usuario, app_password = leer_credenciales()
     Path(CARPETA_DESCARGAS).mkdir(parents=True, exist_ok=True)
+    Path(CARPETA_TEMP_DESCARGAS).mkdir(parents=True, exist_ok=True)
 
     logging.info("Iniciando vigilancia de correos SGDE para %s...", usuario)
     with sync_playwright() as p:
