@@ -157,6 +157,50 @@ def esperar_descarga_completa(ruta_zip: str) -> bool:
     return False
 
 
+def _ruta_larga_segura(ruta: str) -> str:
+    """En Windows, antepone el prefijo especial para evitar el limite clasico de 260 caracteres por ruta."""
+    if os.name == "nt":
+        ruta_abs = os.path.abspath(ruta)
+        if not ruta_abs.startswith("\\\\?\\"):
+            return "\\\\?\\" + ruta_abs
+    return ruta
+
+
+def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
+    """
+    Extrae un zip archivo por archivo. Si uno esta protegido con
+    contrasena, corrupto, o su ruta es demasiado larga para Windows, lo
+    salta con una advertencia en el log y sigue con el resto, en vez de
+    abortar la extraccion completa por un solo archivo problematico.
+    """
+    destino_normalizado = os.path.normpath(os.path.abspath(destino_extraccion))
+    with zipfile.ZipFile(ruta_zip, "r") as zf:
+        for miembro in zf.infolist():
+            ruta_destino = os.path.normpath(os.path.join(destino_normalizado, miembro.filename))
+            if not ruta_destino.startswith(destino_normalizado):
+                logging.warning("Ruta sospechosa dentro de %s, se omite: %s", os.path.basename(ruta_zip), miembro.filename)
+                continue
+
+            ruta_destino_segura = _ruta_larga_segura(ruta_destino)
+            try:
+                if miembro.is_dir():
+                    os.makedirs(ruta_destino_segura, exist_ok=True)
+                    continue
+                os.makedirs(os.path.dirname(ruta_destino_segura), exist_ok=True)
+                with zf.open(miembro) as origen, open(ruta_destino_segura, "wb") as destino:
+                    shutil.copyfileobj(origen, destino)
+            except RuntimeError:
+                logging.warning(
+                    "'%s' dentro de %s esta protegido con contrasena; se omite ese archivo.",
+                    miembro.filename, os.path.basename(ruta_zip),
+                )
+            except OSError as exc:
+                logging.warning(
+                    "No se pudo extraer '%s' de %s (ruta probablemente muy larga para Windows): %s",
+                    miembro.filename, os.path.basename(ruta_zip), exc,
+                )
+
+
 def extraer_zip(ruta_zip: str, carpeta_temp: str) -> str:
     nombre_base = sanear_nombre(Path(ruta_zip).stem)
     destino_extraccion = os.path.join(carpeta_temp, nombre_base)
@@ -165,8 +209,7 @@ def extraer_zip(ruta_zip: str, carpeta_temp: str) -> str:
         destino_extraccion = os.path.join(carpeta_temp, f"{nombre_base}_{contador}")
         contador += 1
 
-    with zipfile.ZipFile(ruta_zip, "r") as zf:
-        zf.extractall(destino_extraccion)
+    _extraer_zip_tolerante(ruta_zip, destino_extraccion)
 
     return destino_extraccion
 
@@ -508,8 +551,7 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
 
     if len(contenidos) == 1 and contenidos[0].lower().endswith(".zip"):
         ruta_zip = os.path.join(carpeta_temp, contenidos[0])
-        with zipfile.ZipFile(ruta_zip, "r") as zf:
-            zf.extractall(destino_final)
+        _extraer_zip_tolerante(ruta_zip, destino_final)
     else:
         shutil.move(carpeta_temp, destino_final)
 
