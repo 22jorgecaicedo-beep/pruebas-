@@ -59,10 +59,10 @@ import docx
 
 # Carpeta donde el navegador guarda los .zip descargados manualmente, y a
 # donde caen tambien los archivos que descarga el portal SGDE.
-CARPETA_DESCARGAS = r"C:\Users\TuUsuario\Downloads"
+CARPETA_DESCARGAS = r"C:\Users\Francy\Downloads"
 
 # Carpeta en el disco duro donde se organizan los procesos ya extraidos.
-CARPETA_DESTINO = r"D:\ProcesosJuridicos"
+CARPETA_DESTINO = r"E:/"
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 
