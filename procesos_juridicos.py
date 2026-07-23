@@ -406,22 +406,40 @@ def conectar_gmail(usuario: str, app_password: str) -> imaplib.IMAP4_SSL:
     return conexion
 
 
+def _fecha_imap(dias_atras: int) -> str:
+    fecha = datetime.date.today() - datetime.timedelta(days=dias_atras)
+    return fecha.strftime("%d-%b-%Y")
+
+
+# Cuantos dias hacia atras buscar correos del SGDE. Con cuentas que llevan
+# años recibiendo estos correos, buscar "desde siempre" descarga cientos o
+# miles de mensajes y hace que Gmail corte la conexion (socket error: EOF).
+DIAS_ATRAS_BUSQUEDA_CORREO = 3
+
+
 def buscar_correos(conexion, asunto_contiene: str):
     conexion.select("INBOX")
-    criterio = f'(FROM "{REMITENTE_SGDE}")'
+    fecha_desde = _fecha_imap(DIAS_ATRAS_BUSQUEDA_CORREO)
+    criterio = f'(FROM "{REMITENTE_SGDE}" SINCE {fecha_desde})'
     estado, datos = conexion.search(None, criterio)
     if estado != "OK":
         return []
 
     mensajes = []
     for num in datos[0].split():
+        # Primero se revisa solo el asunto (liviano, y con PEEK no marca el
+        # correo como leido) antes de descargar el mensaje completo.
+        estado, datos_header = conexion.fetch(num, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+        if estado != "OK" or not datos_header or not datos_header[0]:
+            continue
+        asunto = _decodificar(email.message_from_bytes(datos_header[0][1]).get("Subject", ""))
+        if asunto_contiene.lower() not in asunto.lower():
+            continue
+
         estado, datos_msg = conexion.fetch(num, "(RFC822)")
         if estado != "OK":
             continue
-        msg = email.message_from_bytes(datos_msg[0][1])
-        asunto = _decodificar(msg.get("Subject", ""))
-        if asunto_contiene.lower() in asunto.lower():
-            mensajes.append(msg)
+        mensajes.append(email.message_from_bytes(datos_msg[0][1]))
     return mensajes
 
 
