@@ -31,6 +31,7 @@ modo "solo organizador manual" (parte B), avisando en el log que la
 vigilancia de correo esta desactivada.
 """
 
+import datetime
 import email
 import imaplib
 import logging
@@ -315,13 +316,24 @@ class ManejadorDescargasManual(FileSystemEventHandler):
 
 
 def procesar_zips_manuales_existentes():
+    """
+    Al iniciar, solo procesa los .zip de HOY que ya esten en Descargas
+    (para no reprocesar años de descargas viejas cada vez que arrancas el
+    programa). Los zips nuevos que aparezcan mientras el programa esta
+    corriendo se procesan en tiempo real sin importar la fecha.
+    """
+    hoy = datetime.date.today()
     for nombre in os.listdir(CARPETA_DESCARGAS):
-        if nombre.lower().endswith(".zip"):
-            ruta = os.path.join(CARPETA_DESCARGAS, nombre)
-            try:
-                procesar_zip_manual(ruta)
-            except Exception:
-                logging.exception("[Manual] Error inesperado procesando %s", ruta)
+        if not nombre.lower().endswith(".zip"):
+            continue
+        ruta = os.path.join(CARPETA_DESCARGAS, nombre)
+        fecha_modificacion = datetime.date.fromtimestamp(os.path.getmtime(ruta))
+        if fecha_modificacion != hoy:
+            continue
+        try:
+            procesar_zip_manual(ruta)
+        except Exception:
+            logging.exception("[Manual] Error inesperado procesando %s", ruta)
 
 
 def iniciar_vigilancia_manual():
