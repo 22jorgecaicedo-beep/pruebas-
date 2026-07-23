@@ -588,12 +588,42 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
     return destino_final
 
 
+def _esperar_resultado_envio_correo(pagina, timeout_ms: int = 8000):
+    """
+    Tras darle 'Enviar' al correo, el portal hace una de dos cosas: muestra
+    el campo para escribir el token (exito), o un dialogo de error (correo
+    no coincide). Esta funcion espera activamente a que aparezca cualquiera
+    de los dos, y devuelve el texto del error si lo hay, o None si tuvo
+    exito (o si ninguno aparecio dentro del tiempo dado).
+    """
+    limite = time.time() + (timeout_ms / 1000)
+    while time.time() < limite:
+        if pagina.get_by_placeholder("Token de autenticación").count() > 0:
+            return None
+        error_loc = pagina.locator("text=/no coinciden/i")
+        if error_loc.count() > 0:
+            try:
+                return error_loc.first.inner_text()
+            except Exception:
+                return "El portal mostro un mensaje de error tras enviar el correo."
+        pagina.wait_for_timeout(300)
+    return None
+
+
 def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str, conexion_imap):
     logging.info("[SGDE] Abriendo portal para expediente %s", expediente)
     pagina.goto(link, wait_until="networkidle")
 
-    pagina.get_by_placeholder("Correo Electrónico").fill(correo_usuario)
+    pagina.get_by_placeholder("Correo Electrónico").fill(correo_usuario.strip())
     pagina.get_by_role("button", name=re.compile("enviar", re.IGNORECASE)).click()
+
+    error_portal = _esperar_resultado_envio_correo(pagina)
+    if error_portal:
+        raise RuntimeError(
+            f"El portal SGDE rechazo el correo para el expediente {expediente}: '{error_portal}'. "
+            "Verifica que el correo en credenciales_sgde.txt sea exactamente el que el juzgado "
+            "registro para este expediente (mayusculas, espacios, dominio)."
+        )
 
     logging.info("[SGDE] Esperando el correo con el token para %s...", expediente)
     token = esperar_token(conexion_imap, expediente)
