@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python organizador_zips.py
+python procesos_juridicos.py
 pause
