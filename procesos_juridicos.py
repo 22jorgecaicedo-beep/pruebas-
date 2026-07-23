@@ -98,11 +98,16 @@ NAVEGADOR_VISIBLE = True
 ARCHIVO_PROCESADOS = os.path.join(os.path.dirname(__file__), "expedientes_procesados.txt")
 CARPETA_TEMP_DESCARGAS = os.path.join(os.path.dirname(__file__), "_tmp_descargas_sgde")
 
-# Perfil de navegador persistente donde queda guardada la sesion iniciada
-# (cookies, login de Google/OSCAL) entre una ejecucion y otra. Sin esto, el
-# SGDE trata cada visita como "usuario externo" anonimo y rechaza el acceso
-# aunque el correo escrito sea el correcto.
-CARPETA_PERFIL_NAVEGADOR = os.path.join(os.path.dirname(__file__), "_perfil_navegador_sgde")
+# Perfil de navegador REAL de Chrome (donde ya tienes la sesion de OSCAL
+# iniciada), para que el SGDE no trate el acceso como "usuario externo"
+# anonimo. IMPORTANTE: mientras el programa corre, Chrome debe estar
+# completamente cerrado (no puede abrirse dos veces el mismo perfil).
+#
+# CARPETA_PERFIL_NAVEGADOR es la carpeta raiz "User Data" de Chrome (NO la
+# carpeta especifica del perfil), y NOMBRE_PERFIL_CHROME es el nombre exacto
+# de la subcarpeta de tu perfil dentro de ella (ej. "Default", "Profile 1").
+CARPETA_PERFIL_NAVEGADOR = r"C:\Users\Francy\AppData\Local\Google\Chrome\User Data"
+NOMBRE_PERFIL_CHROME = "Profile 1"
 CARPETA_TEMP_MANUAL = os.path.join(CARPETA_DESTINO, "_tmp_extraccion")
 
 INTENTOS_POR_DESCARGA = 2
@@ -691,14 +696,17 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
     from playwright.sync_api import sync_playwright
 
     Path(CARPETA_TEMP_DESCARGAS).mkdir(parents=True, exist_ok=True)
-    Path(CARPETA_PERFIL_NAVEGADOR).mkdir(parents=True, exist_ok=True)
 
-    # Si la carpeta del perfil esta vacia, es la primera vez que se corre:
-    # hay que iniciar sesion manualmente una vez para que el SGDE reconozca
-    # la sesion como autenticada (no como "usuario externo" anonimo).
-    es_primera_vez = not any(os.scandir(CARPETA_PERFIL_NAVEGADOR))
+    argumentos_perfil = [f"--profile-directory={NOMBRE_PERFIL_CHROME}"]
 
-    logging.info("[SGDE] Iniciando vigilancia de correo para %s...", usuario)
+    logging.info(
+        "[SGDE] Iniciando vigilancia de correo para %s (usando el perfil de Chrome '%s')...",
+        usuario, NOMBRE_PERFIL_CHROME,
+    )
+    logging.info(
+        "[SGDE] IMPORTANTE: Chrome debe estar completamente cerrado (todas las ventanas) para "
+        "que esto funcione, ya que el mismo perfil no se puede usar en dos lugares a la vez."
+    )
     with sync_playwright() as p:
         try:
             contexto = p.chromium.launch_persistent_context(
@@ -706,32 +714,16 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
                 channel="chrome",  # usa tu Chrome real instalado, no el Chromium generico de Playwright
                 headless=not NAVEGADOR_VISIBLE,
                 accept_downloads=True,
+                args=argumentos_perfil,
             )
         except Exception:
-            logging.warning(
-                "[SGDE] No se encontro Google Chrome instalado (o 'playwright install chrome' no se ha "
-                "corrido); usando el Chromium generico de Playwright en su lugar."
+            logging.exception(
+                "[SGDE] No se pudo abrir el perfil de Chrome en '%s' (perfil '%s'). Verifica que Chrome "
+                "este completamente cerrado y que la ruta/nombre de perfil sean correctos.",
+                CARPETA_PERFIL_NAVEGADOR, NOMBRE_PERFIL_CHROME,
             )
-            contexto = p.chromium.launch_persistent_context(
-                CARPETA_PERFIL_NAVEGADOR,
-                headless=not NAVEGADOR_VISIBLE,
-                accept_downloads=True,
-            )
+            raise
         try:
-            if es_primera_vez:
-                logging.info(
-                    "[SGDE] Primera vez: se abrio un navegador. Inicia sesion ahi con tu "
-                    "cuenta de correo/Google de OSCAL (%s) y luego vuelve a esta ventana.",
-                    usuario,
-                )
-                pagina_login = contexto.pages[0] if contexto.pages else contexto.new_page()
-                pagina_login.goto("https://mail.google.com")
-                input(
-                    ">>> Inicia sesion en el navegador que se abrio con tu cuenta de OSCAL. "
-                    "Cuando ya hayas iniciado sesion, vuelve aqui y presiona Enter para continuar... "
-                )
-                pagina_login.close()
-
             while True:
                 try:
                     procesar_expedientes_nuevos(usuario, app_password, contexto)
