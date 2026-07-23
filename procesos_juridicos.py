@@ -700,11 +700,23 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
 
     logging.info("[SGDE] Iniciando vigilancia de correo para %s...", usuario)
     with sync_playwright() as p:
-        contexto = p.chromium.launch_persistent_context(
-            CARPETA_PERFIL_NAVEGADOR,
-            headless=not NAVEGADOR_VISIBLE,
-            accept_downloads=True,
-        )
+        try:
+            contexto = p.chromium.launch_persistent_context(
+                CARPETA_PERFIL_NAVEGADOR,
+                channel="chrome",  # usa tu Chrome real instalado, no el Chromium generico de Playwright
+                headless=not NAVEGADOR_VISIBLE,
+                accept_downloads=True,
+            )
+        except Exception:
+            logging.warning(
+                "[SGDE] No se encontro Google Chrome instalado (o 'playwright install chrome' no se ha "
+                "corrido); usando el Chromium generico de Playwright en su lugar."
+            )
+            contexto = p.chromium.launch_persistent_context(
+                CARPETA_PERFIL_NAVEGADOR,
+                headless=not NAVEGADOR_VISIBLE,
+                accept_downloads=True,
+            )
         try:
             if es_primera_vez:
                 logging.info(
