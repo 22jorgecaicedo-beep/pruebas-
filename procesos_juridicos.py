@@ -449,11 +449,39 @@ def buscar_correos(conexion, asunto_contiene: str, palabra_clave_imap: str):
 
 
 def extraer_expediente_y_link(texto: str):
+    """
+    Extrae el numero de expediente y el link del correo. Cuando el correo
+    es HTML (sin version de texto plano), buscar "https://..." a secas en
+    el HTML crudo puede arrastrar etiquetas pegadas sin espacios (ej. el
+    texto visible del link, que a veces es distinto del href real, o
+    marcado que viene justo despues sin ningun separador). Por eso se
+    busca primero dentro de un atributo href="..." (limite exacto y
+    confiable), y solo si no hay ninguno se cae al patron simple.
+    """
     expediente = re.search(r"Expediente\s*:?\s*(\d{10,})", texto)
-    link = re.search(r"https://siugj-sgde\.ramajudicial\.gov\.co\S+", texto)
-    if expediente and link:
-        return expediente.group(1), link.group(0).rstrip(".,)")
-    return None, None
+    if not expediente:
+        return None, None
+
+    candidato = None
+    for m in re.finditer(r'href=["\']([^"\']*)["\']', texto, re.IGNORECASE):
+        if "siugj-sgde.ramajudicial.gov.co" in m.group(1):
+            candidato = m.group(1)
+            break
+
+    if candidato is None:
+        m_plano = re.search(r"https://siugj-sgde\.ramajudicial\.gov\.co[^\s\"'<>]+", texto)
+        candidato = m_plano.group(0) if m_plano else None
+
+    if candidato is None:
+        return None, None
+
+    # Si el link real viene envuelto en un redireccionador (ej. el
+    # "google.com/url?q=..." que a veces usa Gmail), quedarse solo con la
+    # parte que empieza en el dominio del SGDE, cortando en el primer '&'
+    # (separador de parametros de tracking) para no arrastrar basura.
+    m_real = re.search(r"https://siugj-sgde\.ramajudicial\.gov\.co[^&\s\"'<>]+", candidato)
+    link = m_real.group(0) if m_real else candidato
+    return expediente.group(1), link.rstrip(".,)")
 
 
 def extraer_token(texto: str):
