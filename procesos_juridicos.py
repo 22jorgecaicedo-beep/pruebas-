@@ -645,7 +645,12 @@ def _esperar_resultado_envio_correo(pagina, timeout_ms: int = 8000):
 
 def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str, conexion_imap):
     logging.info("[SGDE] Abriendo portal para expediente %s", expediente)
-    pagina.goto(link, wait_until="networkidle")
+    # "networkidle" nunca llega a cumplirse en muchos sitios modernos (algo
+    # de fondo -- analitica, polling -- siempre deja alguna conexion
+    # abierta), lo que hacia que esto agotara el tiempo siempre. Con
+    # "domcontentloaded" alcanza, porque el propio get_by_placeholder ya
+    # espera a que el campo aparezca en pantalla.
+    pagina.goto(link, wait_until="domcontentloaded")
 
     pagina.get_by_placeholder("Correo Electrónico").fill(correo_usuario.strip())
     pagina.get_by_role("button", name=re.compile("enviar", re.IGNORECASE)).click()
