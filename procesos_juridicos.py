@@ -1,47 +1,27 @@
 """
-Herramienta unica para procesos juridicos: correo -> descarga -> organizado.
+Organizador automatico de ZIP de procesos juridicos.
 
-Hace dos cosas en paralelo, dentro de un solo programa:
+Vigila una carpeta de descargas, y cada vez que llega un .zip nuevo (o al
+iniciar, para los que ya esten ahi de hoy):
 
-  A) Vigila tu Gmail buscando correos de
-     "notificacionessgde@cendoj.ramajudicial.gov.co" que avisan que un
-     juzgado te comparte un expediente. Para cada uno:
-       1. Abre el link del correo con un navegador automatizado.
-       2. Escribe tu correo en el formulario de validacion.
-       3. Espera el segundo correo con el "token" de 6 digitos y lo escribe.
-       4. Descarga cada elemento de la tabla "Elementos Compartidos" (si una
-          fila no tiene flecha de descarga, sino solo un icono de carpeta,
-          entra a ella y descarga archivo por archivo, reconstruyendo la
-          misma estructura de subcarpetas).
-       5. Descomprime/organiza el resultado directo en el disco duro, en una
-          carpeta nombrada con el numero de expediente (23 digitos), que ya
-          viene confirmado por el propio correo/portal.
-
-  B) Vigila tu carpeta de Descargas por si alguna vez bajas un zip de un
-     proceso a mano (por ejemplo desde otro sistema). En ese caso lo
-     extrae, busca el numero de radicado dentro de los PDF/DOCX (o en el
-     nombre de archivo) y organiza la carpeta igual que la parte A.
-
-Antes de usarla, edita la seccion CONFIGURACION mas abajo y crea
-`credenciales_sgde.txt` (ver credenciales_sgde.example.txt) con tu correo
-y una Contrasena de aplicacion de Gmail.
-
-Si `credenciales_sgde.txt` no existe, la herramienta sigue funcionando en
-modo "solo organizador manual" (parte B), avisando en el log que la
-vigilancia de correo esta desactivada.
+  1. Espera a que la descarga termine.
+  2. Lo extrae (tolerando archivos individuales protegidos con contrasena
+     o con rutas demasiado largas para Windows, sin abortar todo el zip
+     por uno solo).
+  3. Busca dentro de los PDF/DOCX (o en los nombres de archivo) un numero
+     de radicado judicial.
+  4. Renombra la carpeta extraida con ese radicado (o con el nombre del
+     zip si no encuentra ninguno) y la mueve al disco duro destino.
+  5. Mueve el .zip original a una subcarpeta "Procesados" (no lo borra).
 """
 
 import datetime
-import email
-import imaplib
 import logging
 import os
 import re
 import shutil
-import threading
 import time
 import zipfile
-from email.header import decode_header
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -56,10 +36,7 @@ import docx
 
 # ============================= CONFIGURACION =============================
 
-# --- General ---
-
-# Carpeta donde el navegador guarda los .zip descargados manualmente, y a
-# donde caen tambien los archivos que descarga el portal SGDE.
+# Carpeta donde el navegador guarda los .zip descargados.
 CARPETA_DESCARGAS = r"C:\Users\Francy\Downloads"
 
 # Carpeta en el disco duro donde se organizan los procesos ya extraidos.
@@ -67,10 +44,8 @@ CARPETA_DESTINO = r"E:/"
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 
-# --- Organizador manual (parte B) ---
-
-# Patrones para reconocer el numero de radicado dentro del texto de un zip
-# descargado a mano (cuando no viene de un correo SGDE que ya lo confirma).
+# Patrones para reconocer el numero de radicado dentro del contenido del
+# zip. Por defecto reconoce el radicado judicial colombiano de 23 digitos.
 PATRONES_RADICADO = [
     r"\b\d{5}[\s\-]?\d{2}[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{4}[\s\-]?\d{5}[\s\-]?\d{2}\b",
     r"\b\d{23}\b",
@@ -80,28 +55,7 @@ ESPERA_ESTABILIDAD_SEGUNDOS = 3
 INTERVALO_CHEQUEO_SEGUNDOS = 1
 MAX_INTENTOS_ESTABILIDAD = 120
 
-# --- Correo + portal SGDE (parte A) ---
-
-ARCHIVO_CREDENCIALES = os.path.join(os.path.dirname(__file__), "credenciales_sgde.txt")
-REMITENTE_SGDE = "notificacionessgde@cendoj.ramajudicial.gov.co"
-ASUNTO_COMPARTIDO = "Se le ha compartido información de proceso judicial"
-ASUNTO_TOKEN = "Token de validación de acceso a información de proceso judicial"
-
-INTERVALO_REVISION_SEGUNDOS = 60
-ESPERA_MAXIMA_TOKEN_SEGUNDOS = 90
-INTERVALO_CHEQUEO_TOKEN_SEGUNDOS = 3
-
-# Mostrar el navegador mientras trabaja. Deja True mientras pruebas por
-# primera vez; pasalo a False cuando ya confies en que funciona bien.
-NAVEGADOR_VISIBLE = True
-
-ARCHIVO_PROCESADOS = os.path.join(os.path.dirname(__file__), "expedientes_procesados.txt")
-CARPETA_TEMP_DESCARGAS = os.path.join(os.path.dirname(__file__), "_tmp_descargas_sgde")
-
 CARPETA_TEMP_MANUAL = os.path.join(CARPETA_DESTINO, "_tmp_extraccion")
-
-INTENTOS_POR_DESCARGA = 2
-TIMEOUT_DESCARGA_MS = 30000
 
 # ===========================================================================
 
@@ -131,9 +85,6 @@ def ruta_destino_disponible(carpeta_padre: str, nombre: str) -> str:
         destino = os.path.join(carpeta_padre, f"{nombre}_{contador}")
         contador += 1
     return destino
-
-
-# ======================= PARTE B: organizador manual ======================
 
 
 def esperar_descarga_completa(ruta_zip: str) -> bool:
@@ -265,34 +216,34 @@ def mover_zip_a_procesados(ruta_zip: str):
 
 def procesar_zip_manual(ruta_zip: str):
     nombre_zip = os.path.basename(ruta_zip)
-    logging.info("[Manual] Nuevo zip detectado: %s", nombre_zip)
+    logging.info("Nuevo zip detectado: %s", nombre_zip)
 
     if not esperar_descarga_completa(ruta_zip):
-        logging.error("[Manual] La descarga de %s nunca se completo o no es un zip valido. Se omite.", nombre_zip)
+        logging.error("La descarga de %s nunca se completo o no es un zip valido. Se omite.", nombre_zip)
         return
 
     try:
         carpeta_extraida = extraer_zip(ruta_zip, CARPETA_TEMP_MANUAL)
     except zipfile.BadZipFile:
-        logging.error("[Manual] %s no es un zip valido. Se omite.", nombre_zip)
+        logging.error("%s no es un zip valido. Se omite.", nombre_zip)
         return
 
     radicado = buscar_radicado(carpeta_extraida)
     if radicado:
         nombre_final = sanear_nombre(radicado)
-        logging.info("[Manual] Radicado encontrado para %s: %s", nombre_zip, radicado)
+        logging.info("Radicado encontrado para %s: %s", nombre_zip, radicado)
     else:
         nombre_final = sanear_nombre(Path(ruta_zip).stem)
-        logging.warning("[Manual] No se encontro radicado en %s. Se usara: %s", nombre_zip, nombre_final)
+        logging.warning("No se encontro radicado en %s. Se usara: %s", nombre_zip, nombre_final)
 
     destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
     shutil.move(carpeta_extraida, destino_final)
-    logging.info("[Manual] Proceso organizado en: %s", destino_final)
+    logging.info("Proceso organizado en: %s", destino_final)
 
     mover_zip_a_procesados(ruta_zip)
 
 
-class ManejadorDescargasManual(FileSystemEventHandler):
+class ManejadorDescargas(FileSystemEventHandler):
     def __init__(self):
         self.en_proceso = set()
 
@@ -303,7 +254,7 @@ class ManejadorDescargasManual(FileSystemEventHandler):
         try:
             procesar_zip_manual(ruta_zip)
         except Exception:
-            logging.exception("[Manual] Error inesperado procesando %s", ruta_zip)
+            logging.exception("Error inesperado procesando %s", ruta_zip)
         finally:
             self.en_proceso.discard(ruta_zip)
 
@@ -316,7 +267,7 @@ class ManejadorDescargasManual(FileSystemEventHandler):
             self._manejar(event.dest_path)
 
 
-def procesar_zips_manuales_existentes():
+def procesar_zips_existentes():
     """
     Al iniciar, solo procesa los .zip de HOY que ya esten en Descargas
     (para no reprocesar años de descargas viejas cada vez que arrancas el
@@ -334,462 +285,29 @@ def procesar_zips_manuales_existentes():
         try:
             procesar_zip_manual(ruta)
         except Exception:
-            logging.exception("[Manual] Error inesperado procesando %s", ruta)
-
-
-def iniciar_vigilancia_manual():
-    Path(CARPETA_TEMP_MANUAL).mkdir(parents=True, exist_ok=True)
-    logging.info("[Manual] Procesando zips ya existentes en %s ...", CARPETA_DESCARGAS)
-    procesar_zips_manuales_existentes()
-
-    logging.info("[Manual] Vigilando %s por si descargas algo a mano...", CARPETA_DESCARGAS)
-    observador = Observer()
-    observador.schedule(ManejadorDescargasManual(), CARPETA_DESCARGAS, recursive=False)
-    observador.start()
-    return observador
-
-
-# ==================== PARTE A: correo + portal SGDE ========================
-
-
-def leer_credenciales():
-    if not os.path.exists(ARCHIVO_CREDENCIALES):
-        return None
-    datos = {}
-    with open(ARCHIVO_CREDENCIALES, encoding="utf-8") as f:
-        for linea in f:
-            if "=" in linea and not linea.strip().startswith("#"):
-                clave, _, valor = linea.partition("=")
-                datos[clave.strip()] = valor.strip()
-    if "GMAIL_USUARIO" not in datos or "GMAIL_APP_PASSWORD" not in datos:
-        return None
-    return datos["GMAIL_USUARIO"], datos["GMAIL_APP_PASSWORD"]
-
-
-def cargar_procesados() -> set:
-    if not os.path.exists(ARCHIVO_PROCESADOS):
-        return set()
-    with open(ARCHIVO_PROCESADOS, encoding="utf-8") as f:
-        return {linea.strip() for linea in f if linea.strip()}
-
-
-def marcar_procesado(expediente: str):
-    with open(ARCHIVO_PROCESADOS, "a", encoding="utf-8") as f:
-        f.write(expediente + "\n")
-
-
-def _decodificar(valor) -> str:
-    partes = decode_header(valor)
-    return "".join(
-        parte.decode(codificacion or "utf-8") if isinstance(parte, bytes) else parte
-        for parte, codificacion in partes
-    )
-
-
-def _texto_del_correo(msg) -> str:
-    if msg.is_multipart():
-        partes = []
-        for parte in msg.walk():
-            if parte.get_content_type() == "text/plain":
-                partes.append(parte.get_payload(decode=True).decode(errors="ignore"))
-        if partes:
-            return "\n".join(partes)
-        for parte in msg.walk():
-            if parte.get_content_type() == "text/html":
-                return parte.get_payload(decode=True).decode(errors="ignore")
-        return ""
-    return msg.get_payload(decode=True).decode(errors="ignore")
-
-
-def conectar_gmail(usuario: str, app_password: str) -> imaplib.IMAP4_SSL:
-    conexion = imaplib.IMAP4_SSL("imap.gmail.com")
-    conexion.login(usuario, app_password)
-    return conexion
-
-
-def _fecha_imap(dias_atras: int) -> str:
-    fecha = datetime.date.today() - datetime.timedelta(days=dias_atras)
-    return fecha.strftime("%d-%b-%Y")
-
-
-# Cuantos dias hacia atras buscar correos del SGDE. Con cuentas que llevan
-# años recibiendo estos correos, buscar "desde siempre" descarga cientos o
-# miles de mensajes y hace que Gmail corte la conexion (socket error: EOF).
-DIAS_ATRAS_BUSQUEDA_CORREO = 3
-
-# Palabras clave sin tildes (para que el SEARCH de IMAP las acepte sin
-# problemas de codificacion) usadas para filtrar el asunto DIRECTAMENTE en
-# el servidor de Gmail, en vez de descargar el asunto de cada correo uno
-# por uno desde Python. Con bandejas muy activas, revisar correo por correo
-# es tan lento que Gmail llega a cortar la conexion a mitad de camino.
-PALABRA_CLAVE_IMAP_COMPARTIDO = "compartido"
-PALABRA_CLAVE_IMAP_TOKEN = "Token de validaci"
-
-
-def buscar_correos(conexion, asunto_contiene: str, palabra_clave_imap: str):
-    conexion.select("INBOX")
-    fecha_desde = _fecha_imap(DIAS_ATRAS_BUSQUEDA_CORREO)
-    criterio = f'(FROM "{REMITENTE_SGDE}" SINCE {fecha_desde} SUBJECT "{palabra_clave_imap}")'
-    estado, datos = conexion.search(None, criterio)
-    if estado != "OK":
-        return []
-
-    mensajes = []
-    for num in datos[0].split():
-        estado, datos_msg = conexion.fetch(num, "(RFC822)")
-        if estado != "OK":
-            continue
-        msg = email.message_from_bytes(datos_msg[0][1])
-        asunto = _decodificar(msg.get("Subject", ""))
-        # El SEARCH del servidor ya filtro por la palabra clave; esta
-        # comparacion local (con tildes) es solo una confirmacion extra.
-        if asunto_contiene.lower() in asunto.lower():
-            mensajes.append(msg)
-    return mensajes
-
-
-def extraer_expediente_y_link(texto: str):
-    """
-    Extrae el numero de expediente y el link del correo. Cuando el correo
-    es HTML (sin version de texto plano), buscar "https://..." a secas en
-    el HTML crudo puede arrastrar etiquetas pegadas sin espacios (ej. el
-    texto visible del link, que a veces es distinto del href real, o
-    marcado que viene justo despues sin ningun separador). Por eso se
-    busca primero dentro de un atributo href="..." (limite exacto y
-    confiable), y solo si no hay ninguno se cae al patron simple.
-    """
-    expediente = re.search(r"Expediente\s*:?\s*(\d{10,})", texto)
-    if not expediente:
-        return None, None
-
-    candidato = None
-    for m in re.finditer(r'href=["\']([^"\']*)["\']', texto, re.IGNORECASE):
-        if "siugj-sgde.ramajudicial.gov.co" in m.group(1):
-            candidato = m.group(1)
-            break
-
-    if candidato is None:
-        m_plano = re.search(r"https://siugj-sgde\.ramajudicial\.gov\.co[^\s\"'<>]+", texto)
-        candidato = m_plano.group(0) if m_plano else None
-
-    if candidato is None:
-        return None, None
-
-    # Si el link real viene envuelto en un redireccionador (ej. el
-    # "google.com/url?q=..." que a veces usa Gmail), quedarse solo con la
-    # parte que empieza en el dominio del SGDE, cortando en el primer '&'
-    # (separador de parametros de tracking) para no arrastrar basura.
-    m_real = re.search(r"https://siugj-sgde\.ramajudicial\.gov\.co[^&\s\"'<>]+", candidato)
-    link = m_real.group(0) if m_real else candidato
-    return expediente.group(1), link.rstrip(".,)")
-
-
-def extraer_token(texto: str):
-    m = re.search(r"token de acceso\s*:?\s*\**\s*(\d{6})", texto, re.IGNORECASE)
-    if m:
-        return m.group(1)
-    m = re.search(r"\b\d{6}\b", texto)
-    return m.group(0) if m else None
-
-
-def esperar_token(conexion, expediente: str):
-    limite = time.time() + ESPERA_MAXIMA_TOKEN_SEGUNDOS
-    while time.time() < limite:
-        mensajes = buscar_correos(conexion, ASUNTO_TOKEN, PALABRA_CLAVE_IMAP_TOKEN)
-        for msg in reversed(mensajes):
-            asunto = _decodificar(msg.get("Subject", ""))
-            if expediente in asunto:
-                token = extraer_token(_texto_del_correo(msg))
-                if token:
-                    return token
-        time.sleep(INTERVALO_CHEQUEO_TOKEN_SEGUNDOS)
-    return None
-
-
-def _nombre_fila(fila) -> str:
-    try:
-        return fila.locator("td").nth(0).inner_text().strip()
-    except Exception:
-        return "elemento"
-
-
-def _celda_tiene_control_descarga(celda) -> bool:
-    try:
-        return celda.locator("svg, img, a, button, [role='button'], [class*='download']").count() > 0
-    except Exception:
-        return False
-
-
-def _fila_es_carpeta(fila) -> bool:
-    try:
-        celda_nombre = fila.locator("td").nth(0)
-        return celda_nombre.locator("svg, img, [class*='folder']").count() > 0
-    except Exception:
-        return False
-
-
-def _descargar_celda(pagina, celda, carpeta_local: str, nombre_base: str) -> bool:
-    for intento in range(1, INTENTOS_POR_DESCARGA + 1):
-        try:
-            with pagina.expect_download(timeout=TIMEOUT_DESCARGA_MS) as info_descarga:
-                celda.locator("svg, img, a, button, [role='button']").first.click()
-            descarga = info_descarga.value
-            nombre_archivo = descarga.suggested_filename or sanear_nombre(nombre_base)
-            ruta_destino = os.path.join(carpeta_local, nombre_archivo)
-            descarga.save_as(ruta_destino)
-            logging.info("[SGDE] Descargado: %s", ruta_destino)
-            return True
-        except Exception as exc:
-            logging.warning(
-                "[SGDE] Intento %s/%s fallido descargando '%s': %s", intento, INTENTOS_POR_DESCARGA, nombre_base, exc
-            )
-    return False
-
-
-def descargar_elementos_de_tabla(pagina, carpeta_local: str) -> int:
-    pagina.wait_for_selector("table:visible tbody tr", timeout=15000)
-    descargas_totales = 0
-
-    while True:
-        filas = pagina.locator("table:visible tbody tr")
-        total_filas = filas.count()
-
-        for i in range(total_filas):
-            fila = filas.nth(i)
-            nombre = _nombre_fila(fila)
-            celda_acciones = fila.locator("td").nth(3)
-            celda_anexos = fila.locator("td").nth(4) if fila.locator("td").count() > 4 else None
-
-            if _celda_tiene_control_descarga(celda_acciones):
-                if _descargar_celda(pagina, celda_acciones, carpeta_local, nombre):
-                    descargas_totales += 1
-
-            elif _fila_es_carpeta(fila):
-                logging.info("[SGDE] '%s' no tiene descarga directa; entrando a la carpeta...", nombre)
-                subcarpeta = os.path.join(carpeta_local, sanear_nombre(nombre))
-                os.makedirs(subcarpeta, exist_ok=True)
-                try:
-                    fila.locator("td").nth(0).click()
-                    descargas_totales += descargar_elementos_de_tabla(pagina, subcarpeta)
-                finally:
-                    boton_regresar = pagina.get_by_role("button", name=re.compile("regresar", re.IGNORECASE))
-                    if boton_regresar.count() > 0:
-                        boton_regresar.first.click()
-                    else:
-                        pagina.go_back()
-                    pagina.wait_for_selector("table:visible tbody tr", timeout=15000)
-                    filas = pagina.locator("table:visible tbody tr")
-
-            else:
-                logging.warning(
-                    "[SGDE] No se encontro forma de descargar '%s' (sin flecha ni carpeta). Revisa manualmente.",
-                    nombre,
-                )
-
-            if celda_anexos is not None and _celda_tiene_control_descarga(celda_anexos):
-                _descargar_celda(pagina, celda_anexos, carpeta_local, f"{nombre}_anexo")
-
-        boton_siguiente = pagina.locator("button[aria-label='Next Page']")
-        if boton_siguiente.count() > 0 and boton_siguiente.first.is_enabled():
-            boton_siguiente.first.click()
-            pagina.wait_for_timeout(500)
-        else:
-            break
-
-    return descargas_totales
-
-
-def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
-    """
-    Deja en CARPETA_DESTINO una carpeta ya descomprimida, nombrada con el
-    numero de expediente (23 digitos), ya sea:
-      - descomprimiendo el unico .zip descargado (caso normal, flecha
-        disponible), o
-      - moviendo tal cual la estructura reconstruida archivo por archivo
-        (caso de carpetas sin flecha).
-    """
-    nombre_final = sanear_nombre(expediente)
-    destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
-    contenidos = os.listdir(carpeta_temp)
-
-    if len(contenidos) == 1 and contenidos[0].lower().endswith(".zip"):
-        ruta_zip = os.path.join(carpeta_temp, contenidos[0])
-        _extraer_zip_tolerante(ruta_zip, destino_final)
-    else:
-        shutil.move(carpeta_temp, destino_final)
-
-    return destino_final
-
-
-def _esperar_resultado_envio_correo(pagina, timeout_ms: int = 8000):
-    """
-    Tras darle 'Enviar' al correo, el portal hace una de dos cosas: muestra
-    el campo para escribir el token (exito), o un dialogo de error (correo
-    no coincide). Esta funcion espera activamente a que aparezca cualquiera
-    de los dos, y devuelve el texto del error si lo hay, o None si tuvo
-    exito (o si ninguno aparecio dentro del tiempo dado).
-    """
-    limite = time.time() + (timeout_ms / 1000)
-    while time.time() < limite:
-        if pagina.get_by_placeholder("Token de autenticación").count() > 0:
-            return None
-        error_loc = pagina.locator("text=/no coinciden/i")
-        if error_loc.count() > 0:
-            try:
-                return error_loc.first.inner_text()
-            except Exception:
-                return "El portal mostro un mensaje de error tras enviar el correo."
-        pagina.wait_for_timeout(300)
-    return None
-
-
-def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str, conexion_imap):
-    logging.info("[SGDE] Abriendo portal para expediente %s", expediente)
-    # "networkidle" nunca llega a cumplirse en muchos sitios modernos (algo
-    # de fondo -- analitica, polling -- siempre deja alguna conexion
-    # abierta), lo que hacia que esto agotara el tiempo siempre. Con
-    # "domcontentloaded" alcanza, porque el propio get_by_placeholder ya
-    # espera a que el campo aparezca en pantalla.
-    pagina.goto(link, wait_until="domcontentloaded")
-
-    pagina.get_by_placeholder("Correo Electrónico").fill(correo_usuario.strip())
-    pagina.get_by_role("button", name=re.compile("enviar", re.IGNORECASE)).click()
-
-    error_portal = _esperar_resultado_envio_correo(pagina)
-    if error_portal:
-        raise RuntimeError(
-            f"El portal SGDE rechazo el correo para el expediente {expediente}: '{error_portal}'. "
-            "Verifica que el correo en credenciales_sgde.txt sea exactamente el que el juzgado "
-            "registro para este expediente (mayusculas, espacios, dominio)."
-        )
-
-    logging.info("[SGDE] Esperando el correo con el token para %s...", expediente)
-    token = esperar_token(conexion_imap, expediente)
-    if not token:
-        raise RuntimeError(f"No llego el correo con el token para el expediente {expediente} a tiempo.")
-
-    pagina.get_by_placeholder("Token de autenticación").fill(token)
-    pagina.get_by_role("button", name=re.compile("validar", re.IGNORECASE)).click()
-    pagina.wait_for_selector("text=Elementos Compartidos")
-
-    carpeta_temp = os.path.join(CARPETA_TEMP_DESCARGAS, expediente)
-    if os.path.exists(carpeta_temp):
-        shutil.rmtree(carpeta_temp)
-    os.makedirs(carpeta_temp, exist_ok=True)
-
-    try:
-        descargas_totales = descargar_elementos_de_tabla(pagina, carpeta_temp)
-        if descargas_totales == 0:
-            raise RuntimeError(
-                f"No se descargo ningun archivo para el expediente {expediente}. "
-                "Es posible que la pagina haya cambiado de estructura; revisa manualmente."
-            )
-        destino_final = organizar_descarga_sgde(carpeta_temp, expediente)
-        logging.info("[SGDE] Proceso organizado en: %s", destino_final)
-    finally:
-        if os.path.exists(carpeta_temp):
-            shutil.rmtree(carpeta_temp, ignore_errors=True)
-
-
-def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):
-    procesados = cargar_procesados()
-    conexion = conectar_gmail(usuario, app_password)
-    try:
-        mensajes = buscar_correos(conexion, ASUNTO_COMPARTIDO, PALABRA_CLAVE_IMAP_COMPARTIDO)
-        for msg in mensajes:
-            texto = _texto_del_correo(msg)
-            expediente, link = extraer_expediente_y_link(texto)
-            if not expediente or not link:
-                continue
-            if expediente in procesados:
-                continue
-
-            logging.info("[SGDE] Expediente nuevo detectado: %s", expediente)
-            contexto = navegador.new_context(
-                accept_downloads=True,
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                ),
-            )
-            # Oculta la senal mas comun con la que un sitio detecta que el
-            # navegador esta siendo controlado por automatizacion.
-            contexto.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            pagina = contexto.new_page()
-            try:
-                descargar_expediente(pagina, usuario, link, expediente, conexion)
-                marcar_procesado(expediente)
-            except Exception:
-                logging.exception("[SGDE] Fallo procesando el expediente %s", expediente)
-            finally:
-                contexto.close()
-    finally:
-        conexion.logout()
-
-
-def iniciar_vigilancia_correo(usuario: str, app_password: str):
-    from playwright.sync_api import sync_playwright
-
-    Path(CARPETA_TEMP_DESCARGAS).mkdir(parents=True, exist_ok=True)
-    logging.info("[SGDE] Iniciando vigilancia de correo para %s...", usuario)
-    logging.info("[SGDE] Correo exacto que se va a usar en el portal (revisa que no tenga espacios raros): %r", usuario.strip())
-    with sync_playwright() as p:
-        argumentos_navegador = ["--disable-blink-features=AutomationControlled"]
-        try:
-            navegador = p.chromium.launch(
-                headless=not NAVEGADOR_VISIBLE,
-                channel="chrome",  # el Chrome real es menos propenso a que lo detecten como bot
-                args=argumentos_navegador,
-            )
-        except Exception:
-            logging.warning(
-                "[SGDE] No se encontro Google Chrome instalado (o falta correr "
-                "'playwright install chrome'); usando el Chromium generico de Playwright."
-            )
-            navegador = p.chromium.launch(headless=not NAVEGADOR_VISIBLE, args=argumentos_navegador)
-        try:
-            while True:
-                try:
-                    procesar_expedientes_nuevos(usuario, app_password, navegador)
-                except Exception:
-                    logging.exception("[SGDE] Error revisando correos nuevos")
-                time.sleep(INTERVALO_REVISION_SEGUNDOS)
-        finally:
-            navegador.close()
-
-
-# ================================== MAIN ===================================
+            logging.exception("Error inesperado procesando %s", ruta)
 
 
 def main():
     configurar_logging()
     Path(CARPETA_DESCARGAS).mkdir(parents=True, exist_ok=True)
-    Path(CARPETA_DESTINO).mkdir(parents=True, exist_ok=True)
+    Path(CARPETA_TEMP_MANUAL).mkdir(parents=True, exist_ok=True)
 
-    observador_manual = iniciar_vigilancia_manual()
+    logging.info("Procesando zips de hoy ya existentes en %s ...", CARPETA_DESCARGAS)
+    procesar_zips_existentes()
 
-    credenciales = leer_credenciales()
-    if not credenciales:
-        logging.warning(
-            "No hay %s (o le faltan datos). La vigilancia automatica de correo "
-            "queda desactivada; solo se organizaran los zips que descargues a mano.",
-            ARCHIVO_CREDENCIALES,
-        )
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-    else:
-        usuario, app_password = credenciales
-        try:
-            iniciar_vigilancia_correo(usuario, app_password)
-        except KeyboardInterrupt:
-            pass
+    logging.info("Vigilando %s en busca de nuevos zips (Ctrl+C para salir)...", CARPETA_DESCARGAS)
+    observador = Observer()
+    observador.schedule(ManejadorDescargas(), CARPETA_DESCARGAS, recursive=False)
+    observador.start()
 
-    observador_manual.stop()
-    observador_manual.join()
-    logging.info("Detenido por el usuario.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observador.stop()
+        logging.info("Detenido por el usuario.")
+    observador.join()
 
 
 if __name__ == "__main__":
