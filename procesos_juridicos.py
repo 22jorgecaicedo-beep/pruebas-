@@ -417,30 +417,34 @@ def _fecha_imap(dias_atras: int) -> str:
 # miles de mensajes y hace que Gmail corte la conexion (socket error: EOF).
 DIAS_ATRAS_BUSQUEDA_CORREO = 3
 
+# Palabras clave sin tildes (para que el SEARCH de IMAP las acepte sin
+# problemas de codificacion) usadas para filtrar el asunto DIRECTAMENTE en
+# el servidor de Gmail, en vez de descargar el asunto de cada correo uno
+# por uno desde Python. Con bandejas muy activas, revisar correo por correo
+# es tan lento que Gmail llega a cortar la conexion a mitad de camino.
+PALABRA_CLAVE_IMAP_COMPARTIDO = "compartido"
+PALABRA_CLAVE_IMAP_TOKEN = "Token de validaci"
 
-def buscar_correos(conexion, asunto_contiene: str):
+
+def buscar_correos(conexion, asunto_contiene: str, palabra_clave_imap: str):
     conexion.select("INBOX")
     fecha_desde = _fecha_imap(DIAS_ATRAS_BUSQUEDA_CORREO)
-    criterio = f'(FROM "{REMITENTE_SGDE}" SINCE {fecha_desde})'
+    criterio = f'(FROM "{REMITENTE_SGDE}" SINCE {fecha_desde} SUBJECT "{palabra_clave_imap}")'
     estado, datos = conexion.search(None, criterio)
     if estado != "OK":
         return []
 
     mensajes = []
     for num in datos[0].split():
-        # Primero se revisa solo el asunto (liviano, y con PEEK no marca el
-        # correo como leido) antes de descargar el mensaje completo.
-        estado, datos_header = conexion.fetch(num, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
-        if estado != "OK" or not datos_header or not datos_header[0]:
-            continue
-        asunto = _decodificar(email.message_from_bytes(datos_header[0][1]).get("Subject", ""))
-        if asunto_contiene.lower() not in asunto.lower():
-            continue
-
         estado, datos_msg = conexion.fetch(num, "(RFC822)")
         if estado != "OK":
             continue
-        mensajes.append(email.message_from_bytes(datos_msg[0][1]))
+        msg = email.message_from_bytes(datos_msg[0][1])
+        asunto = _decodificar(msg.get("Subject", ""))
+        # El SEARCH del servidor ya filtro por la palabra clave; esta
+        # comparacion local (con tildes) es solo una confirmacion extra.
+        if asunto_contiene.lower() in asunto.lower():
+            mensajes.append(msg)
     return mensajes
 
 
@@ -463,7 +467,7 @@ def extraer_token(texto: str):
 def esperar_token(conexion, expediente: str):
     limite = time.time() + ESPERA_MAXIMA_TOKEN_SEGUNDOS
     while time.time() < limite:
-        mensajes = buscar_correos(conexion, ASUNTO_TOKEN)
+        mensajes = buscar_correos(conexion, ASUNTO_TOKEN, PALABRA_CLAVE_IMAP_TOKEN)
         for msg in reversed(mensajes):
             asunto = _decodificar(msg.get("Subject", ""))
             if expediente in asunto:
@@ -658,7 +662,7 @@ def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):
     procesados = cargar_procesados()
     conexion = conectar_gmail(usuario, app_password)
     try:
-        mensajes = buscar_correos(conexion, ASUNTO_COMPARTIDO)
+        mensajes = buscar_correos(conexion, ASUNTO_COMPARTIDO, PALABRA_CLAVE_IMAP_COMPARTIDO)
         for msg in mensajes:
             texto = _texto_del_correo(msg)
             expediente, link = extraer_expediente_y_link(texto)
