@@ -705,7 +705,16 @@ def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):
                 continue
 
             logging.info("[SGDE] Expediente nuevo detectado: %s", expediente)
-            contexto = navegador.new_context(accept_downloads=True)
+            contexto = navegador.new_context(
+                accept_downloads=True,
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                ),
+            )
+            # Oculta la senal mas comun con la que un sitio detecta que el
+            # navegador esta siendo controlado por automatizacion.
+            contexto.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             pagina = contexto.new_page()
             try:
                 descargar_expediente(pagina, usuario, link, expediente, conexion)
@@ -725,7 +734,19 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
     logging.info("[SGDE] Iniciando vigilancia de correo para %s...", usuario)
     logging.info("[SGDE] Correo exacto que se va a usar en el portal (revisa que no tenga espacios raros): %r", usuario.strip())
     with sync_playwright() as p:
-        navegador = p.chromium.launch(headless=not NAVEGADOR_VISIBLE)
+        argumentos_navegador = ["--disable-blink-features=AutomationControlled"]
+        try:
+            navegador = p.chromium.launch(
+                headless=not NAVEGADOR_VISIBLE,
+                channel="chrome",  # el Chrome real es menos propenso a que lo detecten como bot
+                args=argumentos_navegador,
+            )
+        except Exception:
+            logging.warning(
+                "[SGDE] No se encontro Google Chrome instalado (o falta correr "
+                "'playwright install chrome'); usando el Chromium generico de Playwright."
+            )
+            navegador = p.chromium.launch(headless=not NAVEGADOR_VISIBLE, args=argumentos_navegador)
         try:
             while True:
                 try:
