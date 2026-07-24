@@ -98,13 +98,6 @@ NAVEGADOR_VISIBLE = True
 ARCHIVO_PROCESADOS = os.path.join(os.path.dirname(__file__), "expedientes_procesados.txt")
 CARPETA_TEMP_DESCARGAS = os.path.join(os.path.dirname(__file__), "_tmp_descargas_sgde")
 
-# Perfil de navegador dedicado SOLO a esta automatizacion (separado de tu
-# Chrome real de uso diario). Chrome bloquea que un perfil real, ya
-# vinculado a tu cuenta/Sync, sea controlado por herramientas de
-# automatizacion -- por eso no se puede reutilizar tu perfil normal. En este
-# perfil aparte inicias sesion una sola vez (solo el login de Gmail, sin
-# activar "Sincronizacion de Chrome") y queda guardado entre ejecuciones.
-CARPETA_PERFIL_NAVEGADOR = os.path.join(os.path.dirname(__file__), "_perfil_navegador_sgde")
 CARPETA_TEMP_MANUAL = os.path.join(CARPETA_DESTINO, "_tmp_extraccion")
 
 INTENTOS_POR_DESCARGA = 2
@@ -661,7 +654,7 @@ def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str
             shutil.rmtree(carpeta_temp, ignore_errors=True)
 
 
-def procesar_expedientes_nuevos(usuario: str, app_password: str, contexto):
+def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):
     procesados = cargar_procesados()
     conexion = conectar_gmail(usuario, app_password)
     try:
@@ -675,8 +668,7 @@ def procesar_expedientes_nuevos(usuario: str, app_password: str, contexto):
                 continue
 
             logging.info("[SGDE] Expediente nuevo detectado: %s", expediente)
-            # Se reutiliza la misma sesion persistente (con tu login ya
-            # guardado) para cada expediente; solo se abre una pestana nueva.
+            contexto = navegador.new_context(accept_downloads=True)
             pagina = contexto.new_page()
             try:
                 descargar_expediente(pagina, usuario, link, expediente, conexion)
@@ -684,7 +676,7 @@ def procesar_expedientes_nuevos(usuario: str, app_password: str, contexto):
             except Exception:
                 logging.exception("[SGDE] Fallo procesando el expediente %s", expediente)
             finally:
-                pagina.close()
+                contexto.close()
     finally:
         conexion.logout()
 
@@ -693,56 +685,19 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
     from playwright.sync_api import sync_playwright
 
     Path(CARPETA_TEMP_DESCARGAS).mkdir(parents=True, exist_ok=True)
-    Path(CARPETA_PERFIL_NAVEGADOR).mkdir(parents=True, exist_ok=True)
-
-    # Si la carpeta del perfil esta vacia, es la primera vez que se corre:
-    # hay que iniciar sesion manualmente una vez para que el SGDE reconozca
-    # la sesion como autenticada (no como "usuario externo" anonimo).
-    es_primera_vez = not any(os.scandir(CARPETA_PERFIL_NAVEGADOR))
-
     logging.info("[SGDE] Iniciando vigilancia de correo para %s...", usuario)
+    logging.info("[SGDE] Correo exacto que se va a usar en el portal (revisa que no tenga espacios raros): %r", usuario.strip())
     with sync_playwright() as p:
+        navegador = p.chromium.launch(headless=not NAVEGADOR_VISIBLE)
         try:
-            contexto = p.chromium.launch_persistent_context(
-                CARPETA_PERFIL_NAVEGADOR,
-                channel="chrome",  # usa tu Chrome real instalado, no el Chromium generico de Playwright
-                headless=not NAVEGADOR_VISIBLE,
-                accept_downloads=True,
-            )
-        except Exception:
-            logging.warning(
-                "[SGDE] No se encontro Google Chrome instalado (o 'playwright install chrome' no se ha "
-                "corrido); usando el Chromium generico de Playwright en su lugar."
-            )
-            contexto = p.chromium.launch_persistent_context(
-                CARPETA_PERFIL_NAVEGADOR,
-                headless=not NAVEGADOR_VISIBLE,
-                accept_downloads=True,
-            )
-        try:
-            if es_primera_vez:
-                logging.info(
-                    "[SGDE] Primera vez: se abrio un navegador nuevo (separado de tu Chrome normal). "
-                    "Inicia sesion ahi con tu correo de OSCAL (%s) SOLO en Gmail (no actives "
-                    "'Sincronizacion de Chrome'), y luego vuelve a esta ventana.",
-                    usuario,
-                )
-                pagina_login = contexto.pages[0] if contexto.pages else contexto.new_page()
-                pagina_login.goto("https://mail.google.com")
-                input(
-                    ">>> Inicia sesion en el navegador que se abrio con tu cuenta de OSCAL. "
-                    "Cuando ya hayas iniciado sesion, vuelve aqui y presiona Enter para continuar... "
-                )
-                pagina_login.close()
-
             while True:
                 try:
-                    procesar_expedientes_nuevos(usuario, app_password, contexto)
+                    procesar_expedientes_nuevos(usuario, app_password, navegador)
                 except Exception:
                     logging.exception("[SGDE] Error revisando correos nuevos")
                 time.sleep(INTERVALO_REVISION_SEGUNDOS)
         finally:
-            contexto.close()
+            navegador.close()
 
 
 # ================================== MAIN ===================================
