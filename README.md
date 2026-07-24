@@ -108,6 +108,55 @@ termines.
 - Si ya existe una carpeta con el mismo nombre en el destino, se agrega
   un sufijo (`_2`, `_3`, ...) en vez de sobrescribir.
 
+## Validar y renombrar carpetas contra el informe de Excel
+
+`validar_renombrar_carpetas.py` es una herramienta aparte (no se ejecuta
+junto con `procesos_juridicos.py`). Sirve para cuando ya tienes en el disco
+duro carpetas nombradas solo con el radicado de 23 dígitos y quieres
+verificar que cada una corresponda a un proceso del informe de Excel,
+renombrándola a `"<numero>. <radicado>"` (por ejemplo
+`133. 68001400301020180087200`).
+
+El cruce se hace por el **valor exacto del radicado** (columna `RADICADO`
+del Excel) contra el radicado que aparece en el nombre de cada carpeta; el
+número de proceso sale de la columna `No.` de la misma fila. No importa si
+faltan carpetas o filas, cada una se empareja de forma independiente.
+
+1. Instala la dependencia nueva (ya incluida en `requirements.txt`):
+
+   ```
+   pip install -r requirements.txt
+   ```
+
+2. Abre `validar_renombrar_carpetas.py` y edita, al inicio del archivo, la
+   sección `CONFIGURACION`:
+
+   - `RUTA_EXCEL`: ruta al informe (`.xlsx` o `.xlsm`).
+   - `HOJA_EXCEL`, `FILA_ENCABEZADO`, `COLUMNA_NO`, `COLUMNA_RADICADO`: en
+     qué hoja y fila están los encabezados, y cómo se llaman las columnas
+     del número de proceso y del radicado.
+   - `CARPETA_PROCESOS`: carpeta del disco duro donde están las carpetas de
+     cada proceso.
+
+3. Ejecuta el script (por defecto corre en `MODO_PRUEBA = True`, así que no
+   renombra nada todavía, solo muestra un reporte):
+
+   ```
+   python validar_renombrar_carpetas.py
+   ```
+
+4. Revisa el reporte en pantalla y en `validar_renombrar_carpetas.log`:
+   qué se renombraría, qué carpetas ya tienen el nombre correcto, qué
+   procesos del Excel no tienen carpeta en el disco, y qué carpetas del
+   disco no aparecen en el Excel (radicados repetidos o con formato
+   inválido en el Excel se reportan y se omiten del cruce, para no
+   arriesgar un renombrado incorrecto).
+
+5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
+   correrlo para aplicar los renombrados de verdad. Puedes correrlo las
+   veces que quieras: las carpetas que ya tengan el nombre correcto se
+   dejan igual.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
