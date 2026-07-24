@@ -157,6 +157,59 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    veces que quieras: las carpetas que ya tengan el nombre correcto se
    dejan igual.
 
+## Validar el juzgado contra el portal de Rama Judicial
+
+`validar_juzgados_ramajudicial.py` es otra herramienta aparte. Consulta
+cada radicado del informe de Excel en el portal público **Consulta de
+Procesos Nacional Unificada** (CPNU,
+`consultaprocesos.ramajudicial.gov.co`) y compara el despacho que
+reporta el portal contra el juzgado anotado en la columna `JUZGADO` del
+Excel, para detectar procesos que ya cambiaron de despacho pero el Excel
+todavía no se actualizó.
+
+Cómo hace el cruce: el radicado termina en un "consecutivo" (últimos 2
+dígitos) que cambia cuando el proceso pasa a otro despacho. El script
+consulta el radicado tal como está en el Excel, y luego prueba el
+consecutivo siguiente (+1, +2, ...) mientras el portal siga encontrando
+resultado; el despacho del último consecutivo que sí exista es el que se
+compara contra la columna `JUZGADO`.
+
+⚠️ **Antes de usarlo, ten en cuenta:**
+
+- Este script no se pudo probar contra el portal real antes de
+  entregarlo (el entorno donde se escribió no tiene acceso a ese sitio).
+  Corre primero con `SOLO_ESTOS_NUMEROS = [1, 133]` (o los que tú
+  elijas) para confirmar que funciona antes de lanzarlo contra todo el
+  informe, y avísame qué error sale si algo falla para ajustar el script.
+- La comparación de nombres de juzgado es tolerante a diferencias de
+  formato (el Excel dice "PRIMERO CIVIL MUNICIPAL...", el portal dice
+  "JUZGADO 001 CIVIL MUNICIPAL... (SANTANDER)"), pero no es infalible:
+  revisa el CSV completo (no solo la lista de diferencias) si algo se ve
+  raro.
+- Hace una pausa entre cada consulta para no saturar un portal público
+  del Estado; con ~950 procesos, considera correrlo en un par de tandas.
+  Si lo interrumpes con `Ctrl+C`, la próxima vez sigue donde iba en vez
+  de repetir consultas ya hechas (gracias a
+  `validar_juzgados_progreso.txt`).
+- No hay que resolver ningún captcha (se confirmó manualmente que la
+  consulta por número de radicado no lo pide).
+
+Uso:
+
+1. Edita la sección `CONFIGURACION` al inicio del archivo: `RUTA_EXCEL`,
+   `HOJA_EXCEL`, y si quieres, `SOLO_ESTOS_NUMEROS` para una prueba
+   chica primero.
+2. Corre:
+
+   ```
+   python validar_juzgados_ramajudicial.py
+   ```
+
+3. Revisa `validar_juzgados_reporte.csv` (el detalle completo de todos
+   los procesos consultados) y el resumen final en pantalla / en
+   `validar_juzgados_ramajudicial.log` (solo las diferencias y los
+   radicados que el portal no encontró).
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
