@@ -213,6 +213,46 @@ def nombre_carpeta_con_numero_proceso(radicado: str) -> str:
     return radicado
 
 
+def verificar_cruce_excel():
+    """
+    Se llama una vez al arrancar el programa, para avisar de inmediato si
+    el cruce con el informe de Excel esta bien configurado, en vez de
+    fallar en silencio la primera vez que llegue una carpeta nueva.
+    """
+    if cruce_excel is None:
+        logging.warning(
+            "[Informe] No se pudo activar el cruce con el Excel: no se encontro "
+            "validar_renombrar_carpetas.py en esta misma carpeta, o falta instalar sus "
+            "dependencias (corre: pip install -r requirements.txt). Las carpetas nuevas "
+            "se nombraran SOLO con el radicado, sin el numero de proceso, hasta que esto se corrija."
+        )
+        return
+
+    ruta = cruce_excel.RUTA_EXCEL
+    if not ruta or not os.path.exists(ruta):
+        logging.warning(
+            "[Informe] No se encontro el archivo de Excel configurado en RUTA_EXCEL: %r. Revisa que "
+            "la ruta y el nombre del archivo en validar_renombrar_carpetas.py sean EXACTAMENTE iguales "
+            "al archivo real (mayusculas no importan, pero espacios, puntos y guiones bajos si). Las "
+            "carpetas nuevas se nombraran SOLO con el radicado, sin el numero de proceso, hasta que "
+            "esto se corrija.",
+            ruta,
+        )
+        return
+
+    # Un radicado que nunca va a existir de verdad; esto solo fuerza la
+    # primera carga del Excel para poder avisar aqui mismo si algo sale mal
+    # (por ejemplo la hoja o las columnas configuradas no existen),
+    # en vez de esperar a que llegue la primera carpeta nueva.
+    _radicado_a_numero_proceso("0" * 23)
+
+    if _CACHE_INFORME["mtime"] is not None:
+        logging.info(
+            "[Informe] Excel encontrado y leido correctamente: %s (%d procesos disponibles para cruzar).",
+            ruta, len(_CACHE_INFORME["por_radicado"]),
+        )
+
+
 # ======================= PARTE B: organizador manual ======================
 
 
@@ -791,6 +831,7 @@ def main():
     configurar_logging()
     Path(CARPETA_DESCARGAS).mkdir(parents=True, exist_ok=True)
     Path(CARPETA_DESTINO).mkdir(parents=True, exist_ok=True)
+    verificar_cruce_excel()
 
     if SOLO_PROCESAR_HOY_Y_SALIR:
         Path(CARPETA_TEMP_MANUAL).mkdir(parents=True, exist_ok=True)
