@@ -77,11 +77,15 @@ except ImportError:
 # --- General ---
 
 # Carpeta donde el navegador guarda los .zip descargados manualmente, y a
-# donde caen tambien los archivos que descarga el portal SGDE.
-CARPETA_DESCARGAS = r"C:\Users\Francy\Downloads"
+# donde caen tambien los archivos que descarga el portal SGDE. Se detecta
+# sola como "Downloads" del usuario de Windows que esta corriendo esto; si
+# tu carpeta de Descargas esta en otro lado, reemplaza la linea de abajo
+# por algo como CARPETA_DESCARGAS = r"C:\Users\TuUsuario\Downloads".
+CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 
-# Carpeta en el disco duro donde se organizan los procesos ya extraidos.
-CARPETA_DESTINO = r"E:/"
+# Carpeta en el disco duro donde se organizan los procesos ya extraidos
+# (tu disco duro externo con los radicados).
+CARPETA_DESTINO = r"D:/"
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 

@@ -31,8 +31,11 @@ import openpyxl
 
 # ============================= CONFIGURACION =============================
 
-# Ruta al informe de Excel (.xlsx o .xlsm).
-RUTA_EXCEL = r"C:\ruta\a\3._CONTROL_PROCESOS_EJECUTIVOS_ESSA.xlsm"
+# Ruta al informe de Excel (.xlsx o .xlsm). Esta en tu Escritorio; si el
+# nombre del archivo no es exactamente este, ajustalo.
+RUTA_EXCEL = os.path.join(
+    os.path.expanduser("~"), "Desktop", "3._CONTROL_PROCESOS_EJECUTIVOS_ESSA_22072026.xlsm"
+)
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
 HOJA_EXCEL = "ACTIVOS"
@@ -46,8 +49,10 @@ COLUMNA_NO = "No."
 COLUMNA_RADICADO = "RADICADO"
 
 # Carpeta del disco duro donde estan las carpetas de cada proceso (las que
-# hoy tienen solo el radicado de 23 digitos como nombre).
-CARPETA_PROCESOS = r"E:/"
+# hoy tienen solo el radicado de 23 digitos como nombre): tu disco duro
+# externo. Si las carpetas estan dentro de otra carpeta ahi (no directo en
+# la raiz de D:), agrega esa carpeta aqui, ej: r"D:/Procesos".
+CARPETA_PROCESOS = r"D:/"
 
 # True: no renombra nada, solo muestra/registra que haria (recomendado la
 # primera vez). False: aplica los renombrados de verdad.
