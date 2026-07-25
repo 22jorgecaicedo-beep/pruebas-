@@ -31,11 +31,8 @@ import openpyxl
 
 # ============================= CONFIGURACION =============================
 
-# Ruta al informe de Excel (.xlsx o .xlsm). Esta en tu Escritorio; si el
-# nombre del archivo no es exactamente este, ajustalo.
-RUTA_EXCEL = os.path.join(
-    os.path.expanduser("~"), "Desktop", "3._CONTROL_PROCESOS_EJECUTIVOS_ESSA_22072026.xlsm"
-)
+# Ruta al informe de Excel (.xlsx o .xlsm).
+RUTA_EXCEL = r"C:\Users\User\Desktop\3. CONTROL PROCESOS EJECUTIVOS ESSA 22072026 (5).xlsm"
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
 HOJA_EXCEL = "ACTIVOS"
