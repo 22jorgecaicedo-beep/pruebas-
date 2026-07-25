@@ -85,6 +85,16 @@ CARPETA_DESTINO = r"E:/"
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 
+# False (por defecto): el programa queda corriendo de fondo, vigilando
+# Descargas en tiempo real (y el correo, si hay credenciales) hasta que lo
+# cierres con Ctrl+C.
+# True: en vez de quedarse vigilando, organiza solo los .zip de HOY que ya
+# esten en CARPETA_DESCARGAS y termina solo (no vigila correo ni deja nada
+# corriendo). Utilizalo si prefieres correr esto una vez al dia (por
+# ejemplo con el Programador de tareas de Windows) en vez de dejarlo
+# abierto todo el tiempo.
+SOLO_PROCESAR_HOY_Y_SALIR = False
+
 # --- Organizador manual (parte B) ---
 
 # Patrones para reconocer el numero de radicado dentro del texto de un zip
@@ -777,6 +787,13 @@ def main():
     configurar_logging()
     Path(CARPETA_DESCARGAS).mkdir(parents=True, exist_ok=True)
     Path(CARPETA_DESTINO).mkdir(parents=True, exist_ok=True)
+
+    if SOLO_PROCESAR_HOY_Y_SALIR:
+        Path(CARPETA_TEMP_MANUAL).mkdir(parents=True, exist_ok=True)
+        logging.info("[Manual] SOLO_PROCESAR_HOY_Y_SALIR activo: organizando solo los zips de hoy en %s ...", CARPETA_DESCARGAS)
+        procesar_zips_manuales_existentes()
+        logging.info("Listo, no se dejo nada vigilando (correo ni Descargas).")
+        return
 
     observador_manual = iniciar_vigilancia_manual()
 

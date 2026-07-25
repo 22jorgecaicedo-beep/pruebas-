@@ -100,6 +100,26 @@ para que corra en segundo plano sin abrir ventanas.
 Déjalo abierto; ciérralo con `Ctrl+C` (o cerrando la ventana) cuando
 termines.
 
+### Si no quieres dejarlo corriendo de fondo
+
+Por defecto el programa se queda vigilando Descargas en tiempo real (y el
+correo, si configuraste `credenciales_sgde.txt`) hasta que lo cierres.
+
+Si prefieres correrlo una vez al día y que termine solo —por ejemplo con
+el Programador de tareas de Windows, en vez de dejar una ventana
+abierta— abre `procesos_juridicos.py` y cambia:
+
+```
+SOLO_PROCESAR_HOY_Y_SALIR = True
+```
+
+Con esto, cada vez que lo corras organiza únicamente los `.zip` de
+**hoy** que ya estén en `CARPETA_DESCARGAS` (igual que hace siempre al
+arrancar) y termina inmediatamente: no vigila el correo ni se queda
+esperando descargas nuevas. Si no tienes `credenciales_sgde.txt`, el
+correo ya se salta de por sí; este interruptor es para el otro caso,
+cuando tampoco quieres que se quede vigilando Descargas.
+
 ## Ejecutarlo automáticamente al iniciar Windows (opcional)
 
 1. Abre el "Programador de tareas" de Windows.
