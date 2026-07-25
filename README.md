@@ -13,6 +13,15 @@ Un solo programa, `procesos_juridicos.py`, que hace dos cosas a la vez:
    un proceso a mano (de otro sistema, por ejemplo), lo extrae, busca el
    radicado dentro de los PDF/DOCX y lo organiza igual en el disco duro.
 
+Si configuras `RUTA_EXCEL` en `validar_renombrar_carpetas.py` (ver más
+abajo), cada carpeta nueva —de correo o manual— se cruza automáticamente
+contra ese informe: si el radicado ya aparece ahí, la carpeta queda
+nombrada `"numero. radicado"` desde el momento en que se crea, en vez de
+solo el radicado. Si el radicado todavía no está en el informe, la
+carpeta se deja solo con el radicado (como antes) y queda registrada en
+el log; más tarde puedes correr `validar_renombrar_carpetas.py` para
+completar el nombre cuando el informe se actualice.
+
 Todo queda registrado en `procesos_juridicos.log`, dentro de la carpeta
 destino.
 
@@ -137,6 +146,10 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      del número de proceso y del radicado.
    - `CARPETA_PROCESOS`: carpeta del disco duro donde están las carpetas de
      cada proceso.
+
+   Esta misma configuración (`RUTA_EXCEL`, `HOJA_EXCEL`, etc) es la que usa
+   `procesos_juridicos.py` para nombrar bien las carpetas nuevas apenas las
+   crea — no hay que configurarla dos veces.
 
 3. Ejecuta el script (por defecto corre en `MODO_PRUEBA = True`, así que no
    renombra nada todavía, solo muestra un reporte):

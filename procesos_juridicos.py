@@ -22,6 +22,15 @@ Hace dos cosas en paralelo, dentro de un solo programa:
      extrae, busca el numero de radicado dentro de los PDF/DOCX (o en el
      nombre de archivo) y organiza la carpeta igual que la parte A.
 
+En ambos casos, si configuraste `RUTA_EXCEL` en validar_renombrar_carpetas.py
+(el informe de procesos), la carpeta nueva se cruza automaticamente contra
+ese informe: si el radicado ya aparece ahi, la carpeta se nombra
+"numero. radicado" en vez de solo el radicado. Si el radicado todavia no
+esta en el informe (por ejemplo porque el Excel no se ha actualizado), la
+carpeta se deja solo con el radicado como siempre, y mas tarde puedes
+correr validar_renombrar_carpetas.py para completar el nombre cuando el
+informe ya lo tenga.
+
 Antes de usarla, edita la seccion CONFIGURACION mas abajo y crea
 `credenciales_sgde.txt` (ver credenciales_sgde.example.txt) con tu correo
 y una Contrasena de aplicacion de Gmail.
@@ -53,6 +62,15 @@ except ImportError:
     from PyPDF2 import PdfReader
 
 import docx
+
+# Cruce opcional con el informe de Excel: reutiliza la MISMA configuracion
+# (RUTA_EXCEL, HOJA_EXCEL, etc) que ya tengas en validar_renombrar_carpetas.py,
+# para no repetirla en dos archivos. Si ese script no esta al lado de este,
+# o falta openpyxl, el cruce simplemente queda desactivado.
+try:
+    import validar_renombrar_carpetas as cruce_excel
+except ImportError:
+    cruce_excel = None
 
 # ============================= CONFIGURACION =============================
 
@@ -131,6 +149,54 @@ def ruta_destino_disponible(carpeta_padre: str, nombre: str) -> str:
         destino = os.path.join(carpeta_padre, f"{nombre}_{contador}")
         contador += 1
     return destino
+
+
+# ==================== Cruce opcional con el informe de Excel ==================
+
+_CACHE_INFORME = {"mtime": None, "por_radicado": {}}
+
+
+def _radicado_a_numero_proceso(radicado: str):
+    """
+    Busca el radicado en el informe de Excel configurado en
+    validar_renombrar_carpetas.py y devuelve su numero de proceso, o None
+    si el informe no esta configurado/disponible o el radicado todavia no
+    aparece ahi. Recarga el Excel solo cuando cambio en disco, para no
+    releerlo en cada carpeta si llegan varias seguidas.
+    """
+    if cruce_excel is None:
+        return None
+    ruta = cruce_excel.RUTA_EXCEL
+    if not ruta or not os.path.exists(ruta):
+        return None
+
+    mtime_actual = os.path.getmtime(ruta)
+    if _CACHE_INFORME["mtime"] != mtime_actual:
+        try:
+            filas = cruce_excel.quitar_repetidos(cruce_excel.leer_filas_excel())
+            _CACHE_INFORME["por_radicado"] = {radicado_fila: numero for _fila, numero, radicado_fila in filas}
+            _CACHE_INFORME["mtime"] = mtime_actual
+            logging.info("[Informe] Leido %s (%d procesos) para cruzar radicados.", ruta, len(filas))
+        except Exception:
+            logging.exception("[Informe] No se pudo leer %s para cruzar el radicado.", ruta)
+            return None
+
+    return _CACHE_INFORME["por_radicado"].get(radicado)
+
+
+def nombre_carpeta_con_numero_proceso(radicado: str) -> str:
+    """Devuelve 'numero. radicado' si el radicado ya esta en el informe, o solo el radicado si no."""
+    numero = _radicado_a_numero_proceso(radicado)
+    if numero is not None:
+        return f"{numero}. {radicado}"
+
+    if cruce_excel is not None and cruce_excel.RUTA_EXCEL and os.path.exists(cruce_excel.RUTA_EXCEL):
+        logging.warning(
+            "[Informe] El radicado %s todavia no aparece en el informe de Excel; la carpeta queda solo "
+            "con el radicado. Corre validar_renombrar_carpetas.py mas tarde cuando el informe lo tenga.",
+            radicado,
+        )
+    return radicado
 
 
 # ======================= PARTE B: organizador manual ======================
@@ -279,7 +345,7 @@ def procesar_zip_manual(ruta_zip: str):
 
     radicado = buscar_radicado(carpeta_extraida)
     if radicado:
-        nombre_final = sanear_nombre(radicado)
+        nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(radicado))
         logging.info("[Manual] Radicado encontrado para %s: %s", nombre_zip, radicado)
     else:
         nombre_final = sanear_nombre(Path(ruta_zip).stem)
@@ -580,7 +646,7 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
       - moviendo tal cual la estructura reconstruida archivo por archivo
         (caso de carpetas sin flecha).
     """
-    nombre_final = sanear_nombre(expediente)
+    nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(expediente))
     destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
     contenidos = os.listdir(carpeta_temp)
 
