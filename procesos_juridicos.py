@@ -103,9 +103,13 @@ SOLO_PROCESAR_HOY_Y_SALIR = False
 
 # Patrones para reconocer el numero de radicado dentro del texto de un zip
 # descargado a mano (cuando no viene de un correo SGDE que ya lo confirma).
+# Se exige que no haya OTRO DIGITO pegado antes/despues (para no cortar mal
+# un numero mas largo, ni colar uno mas corto); no se usa \b porque \b
+# tambien bloquearia con un "_" pegado (comun en nombres de archivo), y eso
+# si queremos permitirlo.
 PATRONES_RADICADO = [
-    r"\b\d{5}[\s\-]?\d{2}[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{4}[\s\-]?\d{5}[\s\-]?\d{2}\b",
-    r"\b\d{23}\b",
+    r"(?<!\d)\d{5}[\s\-]?\d{2}[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{4}[\s\-]?\d{5}[\s\-]?\d{2}(?!\d)",
+    r"(?<!\d)\d{23}(?!\d)",
 ]
 EXTENSIONES_A_REVISAR = {".pdf", ".docx"}
 ESPERA_ESTABILIDAD_SEGUNDOS = 3
@@ -187,7 +191,7 @@ def _radicado_a_numero_proceso(radicado: str):
     mtime_actual = os.path.getmtime(ruta)
     if _CACHE_INFORME["mtime"] != mtime_actual:
         try:
-            filas = cruce_excel.quitar_repetidos(cruce_excel.leer_filas_excel())
+            filas, _filas_casi_validas = cruce_excel.leer_procesos_validos()
             _CACHE_INFORME["por_radicado"] = {radicado_fila: numero for _fila, numero, radicado_fila in filas}
             _CACHE_INFORME["mtime"] = mtime_actual
             logging.info("[Informe] Leido %s (%d procesos) para cruzar radicados.", ruta, len(filas))
