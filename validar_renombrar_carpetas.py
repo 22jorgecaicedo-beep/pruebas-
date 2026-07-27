@@ -58,7 +58,9 @@ carpeta completa:
     normal contra el Excel en la proxima corrida.
 
 Verificacion mas profunda (solo detecta y reporta, no modifica nada):
-  - Carpetas VACIAS (sin ningun archivo adentro): se revisa si hay un
+  - Carpetas VACIAS (sin ningun archivo real adentro -- no cuentan
+    "basura" que crea Windows solo, como desktop.ini o Thumbs.db): se
+    revisa si hay un
     .zip en CARPETA_DESCARGAS cuyo nombre tenga ese mismo radicado, por
     si quedo pendiente de extraer. Se reporta, no se extrae solo.
   - Carpetas SIN NINGUN radicado reconocible en el nombre (ni siquiera
@@ -388,10 +390,18 @@ def buscar_coincidencia_ultimo_digito(radicado_carpeta: str, procesos):
     return None
 
 
+# Archivos "basura" que Windows crea solo (no cuentan como contenido real
+# al decidir si una carpeta esta vacia).
+ARCHIVOS_A_IGNORAR_AL_CONTAR = {"desktop.ini", "thumbs.db", ".ds_store"}
+
+
 def contar_archivos(carpeta: Path) -> int:
-    """Cuenta cuantos archivos (no carpetas) hay dentro de una carpeta, recursivamente."""
+    """Cuenta cuantos archivos de VERDAD (no basura de Windows, no carpetas) hay dentro de una carpeta, recursivamente."""
     try:
-        return sum(1 for p in carpeta.rglob("*") if p.is_file())
+        return sum(
+            1 for p in carpeta.rglob("*")
+            if p.is_file() and p.name.lower() not in ARCHIVOS_A_IGNORAR_AL_CONTAR
+        )
     except OSError:
         return 0
 
