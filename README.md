@@ -196,7 +196,7 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    inválido en el Excel se reportan y se omiten del cruce, para no
    arriesgar un renombrado incorrecto).
 
-   Dos casos especiales:
+   Casos especiales:
    - `[Consecutivo]`: la carpeta y el Excel coinciden en los primeros 22
      dígitos del radicado y solo difieren en el último (el proceso ya
      cambió de instancia, ej. de "...00" a "...01") — esto **sí se
@@ -206,6 +206,16 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      corrige solo, se reporta para que lo confirmes a mano (dos procesos
      distintos del mismo juzgado y año pueden compartir casi todos los
      dígitos, así que adivinar mal sería peligroso).
+   - `[Duplicado]` / `[Duplicados resueltos]`: cuando el mismo radicado
+     aparece en más de una carpeta (típico de descargas repetidas), el
+     script **nunca borra nada**. Se queda con la carpeta que tenga más
+     archivos adentro (la más completa), la renombra con el número más
+     reciente del Excel, y mueve las demás copias — intactas — a una
+     carpeta `Duplicados_para_revisar` dentro de tu disco, para que las
+     revises y borres a mano si de verdad sobran.
+   - `[Duplicado sin resolver]`: hay más de una carpeta con el mismo
+     radicado, pero ese radicado no está en el Excel — no se puede saber
+     cuál conservar, así que no se toca ninguna; revísalas a mano.
 
 5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
    correrlo para aplicar los renombrados de verdad. Puedes correrlo las

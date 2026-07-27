@@ -22,7 +22,7 @@ Seguridad antes de renombrar:
     carpeta una vez mas.
   - Al terminar de renombrar (si MODO_PRUEBA = False), se hace una
     revision final volviendo a leer el disco para confirmar que cada
-    carpeta quedo con el nombre esperado.
+    carpeta (y cada carpeta duplicada movida) quedo donde se esperaba.
 
 Dos tipos de diferencia de un digito, tratadas DISTINTO a proposito:
   - Si el radicado de la carpeta coincide con el del Excel en los primeros
@@ -38,8 +38,17 @@ Dos tipos de diferencia de un digito, tratadas DISTINTO a proposito:
     si, y adivinar mal significaria ponerle a una carpeta el numero de un
     proceso que no es.
 
+Carpetas DUPLICADAS (mismo radicado exacto en mas de una carpeta, tipico
+de descargas repetidas del mismo proceso): el script NUNCA borra nada.
+Se queda con la carpeta que tenga MAS ARCHIVOS adentro (la mas completa),
+la renombra "numero. radicado" usando el numero MAS RECIENTE del Excel
+cargado en RUTA_EXCEL, y mueve las demas copias (sin tocar su contenido)
+a una carpeta "Duplicados_para_revisar" dentro de CARPETA_PROCESOS, para
+que las revises y borres a mano si de verdad sobran.
+
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
+  - Carpetas duplicadas resueltas (cual se conservo, cuales se movieron).
   - Carpetas que ya tenian el nombre correcto (se dejan igual).
   - Procesos del Excel sin carpeta correspondiente en el disco.
   - Carpetas en el disco cuyo radicado no aparece en el Excel.
@@ -47,9 +56,9 @@ Al terminar, reporta (en pantalla y en un log):
   - Filas del Excel con radicado invalido o con numero/radicado repetido
     (no se tocan, para no arriesgar un cruce incorrecto).
 
-Por defecto corre en MODO_PRUEBA (no renombra nada, solo muestra que haria).
-Revisa el reporte y, cuando confies en que el cruce esta bien, cambia
-MODO_PRUEBA a False para aplicar los renombrados de verdad.
+Por defecto corre en MODO_PRUEBA (no renombra ni mueve nada, solo muestra
+que haria). Revisa el reporte y, cuando confies en que el cruce esta bien,
+cambia MODO_PRUEBA a False para aplicar los cambios de verdad.
 """
 
 import logging
@@ -81,11 +90,14 @@ COLUMNA_RADICADO = "RADICADO"
 # la raiz de D:), agrega esa carpeta aqui, ej: r"D:/Procesos".
 CARPETA_PROCESOS = r"D:/"
 
-# True: no renombra nada, solo muestra/registra que haria (recomendado la
-# primera vez). False: aplica los renombrados de verdad.
+# True: no renombra ni mueve nada, solo muestra/registra que haria
+# (recomendado la primera vez). False: aplica los cambios de verdad.
 MODO_PRUEBA = True
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_renombrar_carpetas.log")
+
+# Carpeta donde se mueven (nunca se borran) las copias duplicadas sobrantes.
+NOMBRE_CARPETA_DUPLICADOS = "Duplicados_para_revisar"
 
 # Radicado "bueno": exactamente 23 digitos, sin otro digito pegado antes o
 # despues (para no cortar mal un numero mas largo, ni colar uno mas corto).
@@ -291,6 +303,67 @@ def buscar_coincidencia_ultimo_digito(radicado_carpeta: str, procesos):
     return None
 
 
+def contar_archivos(carpeta: Path) -> int:
+    """Cuenta cuantos archivos (no carpetas) hay dentro de una carpeta, recursivamente."""
+    try:
+        return sum(1 for p in carpeta.rglob("*") if p.is_file())
+    except OSError:
+        return 0
+
+
+def ruta_libre(carpeta_padre: Path, nombre: str) -> Path:
+    """Como el nombre sugiere: la primera ruta dentro de carpeta_padre/nombre[_N] que no exista todavia."""
+    destino = carpeta_padre / nombre
+    contador = 2
+    while destino.exists():
+        destino = carpeta_padre / f"{nombre}_{contador}"
+        contador += 1
+    return destino
+
+
+def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, radicado_original: str, reporte: dict) -> bool:
+    """
+    Intenta renombrar 'carpeta' a 'numero. radicado_final', con las
+    verificaciones de seguridad de siempre (evita pisar una carpeta que ya
+    exista, y vuelve a confirmar el radicado justo antes de tocar nada).
+    Actualiza los contadores/listas del 'reporte' segun corresponda.
+    Devuelve True si ya estaba bien, se renombro, o se simulo; False si
+    hubo un conflicto o fallo la re-verificacion (no se toco la carpeta).
+    """
+    if nombre_ya_correcto(carpeta.name, numero, radicado_final):
+        reporte["ya_correctas"] += 1
+        return True
+
+    nuevo_nombre = f"{numero}. {radicado_final}"
+    destino = carpeta.parent / nuevo_nombre
+
+    if destino.exists() and destino.resolve() != carpeta.resolve():
+        reporte["conflictos"] += 1
+        logging.warning(
+            "[Conflicto] '%s' deberia renombrarse a '%s' pero ya existe una carpeta con ese nombre. Se omite, revisa manualmente.",
+            carpeta.name, nuevo_nombre,
+        )
+        return False
+
+    # Re-verificacion justo antes de renombrar: vuelve a leer el radicado
+    # ORIGINAL de la carpeta una vez mas y confirma que sigue siendo el mismo.
+    radicado_confirmado = radicado_de_nombre_carpeta(carpeta.name)
+    if radicado_confirmado != radicado_original:
+        logging.error(
+            "[Seguridad] '%s' cambio de nombre justo antes de renombrarla; se omite por seguridad.",
+            carpeta.name,
+        )
+        return False
+
+    if MODO_PRUEBA:
+        logging.info("[SIMULACION] '%s'  ->  '%s'", carpeta.name, nuevo_nombre)
+    else:
+        carpeta.rename(destino)
+        logging.info("[Renombrada] '%s'  ->  '%s'", carpeta.name, nuevo_nombre)
+    reporte["renombradas"].append((carpeta.name, nuevo_nombre))
+    return True
+
+
 def procesar():
     # --- Doble lectura independiente del Excel, para confirmar que el
     # resultado es estable antes de tocar ninguna carpeta ---
@@ -317,104 +390,135 @@ def procesar():
     por_radicado = {radicado: (numero, fila) for fila, numero, radicado in procesos}
 
     carpeta_raiz = Path(CARPETA_PROCESOS)
-    carpetas = [d for d in carpeta_raiz.iterdir() if d.is_dir()]
+    carpeta_duplicados = carpeta_raiz / NOMBRE_CARPETA_DUPLICADOS
+    carpetas = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS]
 
+    # Agrupa las carpetas por su radicado EXACTO (ignora prefijo "numero."
+    # y cualquier sufijo tipo "_2"). Las que no tengan un radicado exacto
+    # de 23 digitos se procesan aparte (solo para buscar posibles
+    # coincidencias por largo distinto).
+    grupos_por_radicado = {}
+    carpetas_sin_radicado_exacto = []
+    for carpeta in carpetas:
+        radicado = radicado_de_nombre_carpeta(carpeta.name)
+        if radicado:
+            grupos_por_radicado.setdefault(radicado, []).append(carpeta)
+        else:
+            carpetas_sin_radicado_exacto.append(carpeta)
+
+    reporte = {
+        "renombradas": [],  # (nombre_original, nuevo_nombre)
+        "ya_correctas": 0,
+        "conflictos": 0,
+    }
     radicados_encontrados_en_disco = set()
-    renombradas = []  # lista de (carpeta_original, nuevo_nombre) para la auditoria final
-    correcciones_consecutivo = []
-    ya_correctas = 0
     sin_proceso_en_excel = []
-    conflictos = 0
     posibles_coincidencias = []
+    duplicados_resueltos = []  # (radicado, nombre_conservado_nuevo, [(nombre_movido, destino_dup)])
+    duplicados_sin_resolver = []  # (radicado, [nombres]) -- no se pudo determinar el numero
+    movidos_a_auditar = []  # (nombre_original, ruta_destino) para la revision final
 
     candidatos_cercanos = procesos_casi_validos + [
         (fila, numero, radicado) for fila, numero, radicado in procesos
     ]
 
-    for carpeta in carpetas:
-        radicado_en_carpeta = radicado_de_nombre_carpeta(carpeta.name)
-
-        if not radicado_en_carpeta:
-            # No tiene un radicado EXACTO de 23 digitos. Antes de descartarla,
-            # revisa si tiene uno "casi bueno" (21-24 digitos) que pueda ser
-            # una posible coincidencia con el Excel.
-            radicado_cercano = radicado_cercano_de_nombre_carpeta(carpeta.name)
-            if radicado_cercano:
-                coincidencia = buscar_coincidencia_cercana(radicado_cercano, candidatos_cercanos)
-                if coincidencia:
-                    fila, numero, radicado_excel = coincidencia
-                    posibles_coincidencias.append((carpeta.name, radicado_cercano, numero, radicado_excel, fila))
-            continue
-
+    for radicado_en_carpeta, lista_carpetas in grupos_por_radicado.items():
         match = por_radicado.get(radicado_en_carpeta)
-        radicado_para_nombre = radicado_en_carpeta
+        radicado_final = radicado_en_carpeta
         correccion = None
 
         if not match:
-            # No hay match exacto. Primero revisa si es el MISMO proceso con
-            # el ultimo digito (consecutivo/instancia) distinto -- ese caso
-            # SI se corrige automatico.
             match_consecutivo = buscar_coincidencia_ultimo_digito(radicado_en_carpeta, procesos)
             if match_consecutivo:
                 fila, numero, radicado_excel = match_consecutivo
                 match = (numero, fila)
-                radicado_para_nombre = radicado_excel
+                radicado_final = radicado_excel
                 correccion = (radicado_en_carpeta, radicado_excel, fila, numero)
-            else:
-                # Revisa si hay una fila del Excel que difiera por 1 digito
-                # en cualquier posicion -- eso NO se corrige automatico.
+
+        # --- Un solo radicado, una sola carpeta: caso normal ---
+        if len(lista_carpetas) == 1:
+            carpeta = lista_carpetas[0]
+
+            if not match:
                 coincidencia = buscar_coincidencia_cercana(radicado_en_carpeta, candidatos_cercanos)
                 if coincidencia:
                     fila, numero, radicado_excel = coincidencia
-                    if radicado_excel != radicado_en_carpeta:  # evita reportar el propio match exacto
+                    if radicado_excel != radicado_en_carpeta:
                         posibles_coincidencias.append((carpeta.name, radicado_en_carpeta, numero, radicado_excel, fila))
                 sin_proceso_en_excel.append(carpeta.name)
                 continue
 
-        radicados_encontrados_en_disco.add(radicado_para_nombre)
+            numero, fila = match
+            if correccion:
+                radicado_viejo, radicado_nuevo, fila_excel, numero_excel = correccion
+                logging.warning(
+                    "[Consecutivo] Carpeta '%s': el radicado termina en '%s' pero el informe (fila %s, "
+                    "proceso %s) tiene el mismo proceso terminado en '%s'; se corrige al del informe.",
+                    carpeta.name, radicado_viejo[-1], fila_excel, numero_excel, radicado_nuevo[-1],
+                )
+
+            radicados_encontrados_en_disco.add(radicado_final)
+            intentar_renombrar_carpeta(carpeta, numero, radicado_final, radicado_en_carpeta, reporte)
+            continue
+
+        # --- Mas de una carpeta con el MISMO radicado exacto: duplicadas ---
+        if not match:
+            duplicados_sin_resolver.append((radicado_en_carpeta, [c.name for c in lista_carpetas]))
+            for carpeta in lista_carpetas:
+                sin_proceso_en_excel.append(carpeta.name)
+            continue
+
         numero, fila = match
+        radicados_encontrados_en_disco.add(radicado_final)
 
         if correccion:
             radicado_viejo, radicado_nuevo, fila_excel, numero_excel = correccion
             logging.warning(
-                "[Consecutivo] Carpeta '%s': el radicado termina en '%s' pero el informe (fila %s, "
+                "[Consecutivo] Grupo duplicado con radicado terminado en '%s': el informe (fila %s, "
                 "proceso %s) tiene el mismo proceso terminado en '%s'; se corrige al del informe.",
-                carpeta.name, radicado_viejo[-1], fila_excel, numero_excel, radicado_nuevo[-1],
+                radicado_viejo[-1], fila_excel, numero_excel, radicado_nuevo[-1],
             )
 
-        if nombre_ya_correcto(carpeta.name, numero, radicado_para_nombre):
-            ya_correctas += 1
-            continue
+        # Se conserva la carpeta con MAS ARCHIVOS adentro (la mas completa).
+        conteos = [(carpeta, contar_archivos(carpeta)) for carpeta in lista_carpetas]
+        conteos.sort(key=lambda par: par[1], reverse=True)
+        carpeta_conservar, archivos_conservar = conteos[0]
+        otras = conteos[1:]
 
-        nuevo_nombre = f"{numero}. {radicado_para_nombre}"
-        destino = carpeta.parent / nuevo_nombre
+        nuevo_nombre = f"{numero}. {radicado_final}"
+        movidas = []
 
-        if destino.exists():
-            conflictos += 1
-            logging.warning(
-                "[Conflicto] '%s' deberia renombrarse a '%s' pero ya existe una carpeta con ese nombre. Se omite, revisa manualmente.",
-                carpeta.name, nuevo_nombre,
-            )
-            continue
+        for carpeta_extra, archivos_extra in otras:
+            destino_dup = ruta_libre(carpeta_duplicados, carpeta_extra.name)
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION-Duplicado] '%s' (%d archivo(s)) se moveria a '%s/%s' -- se conserva '%s' (%d archivo(s)) como '%s'.",
+                    carpeta_extra.name, archivos_extra, NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+                    carpeta_conservar.name, archivos_conservar, nuevo_nombre,
+                )
+            else:
+                carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+                carpeta_extra.rename(destino_dup)
+                logging.info(
+                    "[Duplicado] '%s' (%d archivo(s)) se movio a '%s/%s' -- se conserva '%s' (%d archivo(s)) como '%s'.",
+                    carpeta_extra.name, archivos_extra, NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+                    carpeta_conservar.name, archivos_conservar, nuevo_nombre,
+                )
+                movidos_a_auditar.append((carpeta_extra.name, destino_dup))
+            movidas.append((carpeta_extra.name, destino_dup.name))
 
-        # Re-verificacion justo antes de renombrar: vuelve a leer el radicado
-        # ORIGINAL de la carpeta una vez mas y confirma que sigue siendo el mismo.
-        radicado_confirmado = radicado_de_nombre_carpeta(carpeta.name)
-        if radicado_confirmado != radicado_en_carpeta:
-            logging.error(
-                "[Seguridad] '%s' cambio de nombre justo antes de renombrarla; se omite por seguridad.",
-                carpeta.name,
-            )
-            continue
+        intentar_renombrar_carpeta(carpeta_conservar, numero, radicado_final, radicado_en_carpeta, reporte)
+        duplicados_resueltos.append((radicado_final, nuevo_nombre, movidas))
 
-        if MODO_PRUEBA:
-            logging.info("[SIMULACION] '%s'  ->  '%s'", carpeta.name, nuevo_nombre)
-        else:
-            carpeta.rename(destino)
-            logging.info("[Renombrada] '%s'  ->  '%s'", carpeta.name, nuevo_nombre)
-        renombradas.append((carpeta.name, nuevo_nombre))
-        if correccion:
-            correcciones_consecutivo.append((carpeta.name, nuevo_nombre))
+    # --- Carpetas sin radicado EXACTO de 23 digitos: solo se revisan por
+    # si tienen un radicado "casi bueno" (largo distinto) coincidente ---
+    for carpeta in carpetas_sin_radicado_exacto:
+        radicado_cercano = radicado_cercano_de_nombre_carpeta(carpeta.name)
+        if radicado_cercano:
+            coincidencia = buscar_coincidencia_cercana(radicado_cercano, candidatos_cercanos)
+            if coincidencia:
+                fila, numero, radicado_excel = coincidencia
+                posibles_coincidencias.append((carpeta.name, radicado_cercano, numero, radicado_excel, fila))
 
     sin_carpeta_en_disco = 0
     for fila, numero, radicado in procesos:
@@ -430,6 +534,15 @@ def procesar():
         for nombre in sin_proceso_en_excel:
             logging.warning("   - %s", nombre)
 
+    if duplicados_sin_resolver:
+        logging.warning(
+            "[Duplicado sin resolver] %d radicado(s) con mas de una carpeta en el disco, pero el radicado "
+            "no aparece en el Excel -- no se pudo determinar cual conservar. Revisa a mano:",
+            len(duplicados_sin_resolver),
+        )
+        for radicado, nombres in duplicados_sin_resolver:
+            logging.warning("   - Radicado %s: %s", radicado, ", ".join(nombres))
+
     if posibles_coincidencias:
         logging.warning(
             "[POSIBLE COINCIDENCIA] %d caso(s) donde el radicado de la carpeta y uno del Excel difieren "
@@ -443,37 +556,55 @@ def procesar():
                 nombre_carpeta, radicado_carpeta, fila_excel, numero_excel, radicado_excel,
             )
 
-    # --- Auditoria final: si se aplicaron renombrados de verdad, vuelve a
-    # leer el disco y confirma que cada uno quedo con el nombre esperado ---
+    if duplicados_resueltos:
+        logging.info(
+            "[Duplicados resueltos] %d radicado(s) tenian mas de una carpeta; se conservo la mas completa "
+            "y se movieron las demas a '%s' (nada se borro):",
+            len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
+        )
+        for radicado, nombre_conservado, movidas in duplicados_resueltos:
+            for nombre_movido, nombre_destino in movidas:
+                logging.info("   - Radicado %s: se conservo '%s'; se movio '%s' -> '%s/%s'",
+                             radicado, nombre_conservado, nombre_movido, NOMBRE_CARPETA_DUPLICADOS, nombre_destino)
+
+    # --- Auditoria final: si se aplicaron cambios de verdad, vuelve a leer
+    # el disco y confirma que cada carpeta (renombrada o movida) quedo
+    # donde se esperaba ---
+    renombradas = reporte["renombradas"]
     fallos_auditoria = []
-    if renombradas and not MODO_PRUEBA:
+    if (renombradas or movidos_a_auditar) and not MODO_PRUEBA:
         nombres_actuales = {d.name for d in carpeta_raiz.iterdir() if d.is_dir()}
         for nombre_original, nuevo_nombre in renombradas:
             if nuevo_nombre not in nombres_actuales:
                 fallos_auditoria.append((nombre_original, nuevo_nombre))
+        for nombre_original, ruta_destino in movidos_a_auditar:
+            if not ruta_destino.exists():
+                fallos_auditoria.append((nombre_original, str(ruta_destino)))
+
         if fallos_auditoria:
             logging.error(
-                "[Seguridad] %d carpeta(s) no quedaron con el nombre esperado despues de renombrar; revisalas a mano:",
+                "[Seguridad] %d carpeta(s) no quedaron donde se esperaba despues de aplicar los cambios; revisalas a mano:",
                 len(fallos_auditoria),
             )
-            for nombre_original, nuevo_nombre in fallos_auditoria:
-                logging.error("   - se esperaba '%s' (antes: '%s')", nuevo_nombre, nombre_original)
+            for nombre_original, esperado in fallos_auditoria:
+                logging.error("   - se esperaba '%s' (antes: '%s')", esperado, nombre_original)
         else:
-            logging.info("[Seguridad] Revision final: todas las carpetas renombradas quedaron con el nombre esperado.")
+            logging.info("[Seguridad] Revision final: todas las carpetas quedaron donde se esperaba.")
 
     logging.info("-" * 60)
     logging.info(
-        "Resumen: %d %s (de las cuales %d son correcciones de consecutivo/instancia), %d ya tenian el "
-        "nombre correcto, %d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de "
-        "nombre, %d posibles coincidencias para revisar.",
+        "Resumen: %d %s, %d ya tenian el nombre correcto, %d duplicado(s) resuelto(s) (movidos a %s), "
+        "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
+        "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
-        len(correcciones_consecutivo),
-        ya_correctas, sin_carpeta_en_disco, len(sin_proceso_en_excel), conflictos, len(posibles_coincidencias),
+        reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
+        sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
+        len(duplicados_sin_resolver),
     )
     if MODO_PRUEBA:
         logging.info(
-            "MODO_PRUEBA esta activo: no se renombro nada todavia. Revisa el reporte de arriba "
+            "MODO_PRUEBA esta activo: no se renombro ni se movio nada todavia. Revisa el reporte de arriba "
             "y, si se ve bien, cambia MODO_PRUEBA = False al inicio del script y vuelve a correrlo."
         )
 
