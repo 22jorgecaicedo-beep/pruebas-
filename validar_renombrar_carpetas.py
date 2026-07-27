@@ -24,13 +24,19 @@ Seguridad antes de renombrar:
     revision final volviendo a leer el disco para confirmar que cada
     carpeta quedo con el nombre esperado.
 
-Carpetas con un radicado de 22 o 24 digitos (le sobra o le falta un
-digito) que no calzan exacto con ningun radicado del Excel, pero SI
-calzan quitandoles/agregandoles un digito, se reportan aparte como
-"POSIBLE COINCIDENCIA" para que las revises tu a mano -- el script NO las
-renombra automaticamente, porque dos procesos distintos del mismo juzgado
-y año suelen compartir casi todos los digitos entre si, y adivinar mal
-significaria ponerle a una carpeta el numero de un proceso que no es.
+Dos tipos de diferencia de un digito, tratadas DISTINTO a proposito:
+  - Si el radicado de la carpeta coincide con el del Excel en los primeros
+    22 digitos y solo difiere en el ULTIMO (el "consecutivo" que indica la
+    instancia/reparto, ej. termina en 00 o en 01), SI se corrige
+    automatico: son el mismo proceso, solo cambio de instancia. Queda
+    registrado en el log como "[Consecutivo]".
+  - Si el radicado de la carpeta le sobra o le falta un digito en
+    CUALQUIER OTRA posicion (o tiene 22/24 digitos en vez de 23), se
+    reporta aparte como "POSIBLE COINCIDENCIA" para que la revises tu a
+    mano -- el script NO la renombra sola, porque dos procesos distintos
+    del mismo juzgado y año suelen compartir casi todos los digitos entre
+    si, y adivinar mal significaria ponerle a una carpeta el numero de un
+    proceso que no es.
 
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
@@ -261,6 +267,30 @@ def buscar_coincidencia_cercana(radicado_carpeta: str, candidatos):
     return None
 
 
+def mismo_radicado_salvo_ultimo_digito(a: str, b: str) -> bool:
+    """
+    True si 'a' y 'b' tienen los dos exactamente 23 digitos, son iguales en
+    los primeros 22, y solo difieren en el ultimo (el "consecutivo" que
+    indica la instancia/reparto del proceso, ej. termina en 00 o en 01).
+    A diferencia de un digito de mas/menos en cualquier posicion, esto SI
+    se corrige automatico: los primeros 22 digitos ya identifican que es
+    el mismo proceso, el ultimo digito distinto no es un proceso diferente.
+    """
+    return len(a) == 23 and len(b) == 23 and a[:-1] == b[:-1] and a[-1] != b[-1]
+
+
+def buscar_coincidencia_ultimo_digito(radicado_carpeta: str, procesos):
+    """
+    Busca entre 'procesos' (radicados EXACTOS de 23 digitos del Excel) uno
+    que coincida con el radicado de la carpeta salvo el ultimo digito.
+    Devuelve la primera coincidencia encontrada, o None.
+    """
+    for fila, numero, radicado_excel in procesos:
+        if mismo_radicado_salvo_ultimo_digito(radicado_carpeta, radicado_excel):
+            return fila, numero, radicado_excel
+    return None
+
+
 def procesar():
     # --- Doble lectura independiente del Excel, para confirmar que el
     # resultado es estable antes de tocar ninguna carpeta ---
@@ -291,6 +321,7 @@ def procesar():
 
     radicados_encontrados_en_disco = set()
     renombradas = []  # lista de (carpeta_original, nuevo_nombre) para la auditoria final
+    correcciones_consecutivo = []
     ya_correctas = 0
     sin_proceso_en_excel = []
     conflictos = 0
@@ -301,9 +332,9 @@ def procesar():
     ]
 
     for carpeta in carpetas:
-        radicado = radicado_de_nombre_carpeta(carpeta.name)
+        radicado_en_carpeta = radicado_de_nombre_carpeta(carpeta.name)
 
-        if not radicado:
+        if not radicado_en_carpeta:
             # No tiene un radicado EXACTO de 23 digitos. Antes de descartarla,
             # revisa si tiene uno "casi bueno" (21-24 digitos) que pueda ser
             # una posible coincidencia con el Excel.
@@ -315,26 +346,47 @@ def procesar():
                     posibles_coincidencias.append((carpeta.name, radicado_cercano, numero, radicado_excel, fila))
             continue
 
-        match = por_radicado.get(radicado)
-        if not match:
-            # Radicado exacto de 23 digitos, pero no esta en el Excel tal
-            # cual. Revisa si hay una fila del Excel que difiera por 1 digito.
-            coincidencia = buscar_coincidencia_cercana(radicado, candidatos_cercanos)
-            if coincidencia:
-                fila, numero, radicado_excel = coincidencia
-                if radicado_excel != radicado:  # evita reportar el propio match exacto
-                    posibles_coincidencias.append((carpeta.name, radicado, numero, radicado_excel, fila))
-            sin_proceso_en_excel.append(carpeta.name)
-            continue
+        match = por_radicado.get(radicado_en_carpeta)
+        radicado_para_nombre = radicado_en_carpeta
+        correccion = None
 
-        radicados_encontrados_en_disco.add(radicado)
+        if not match:
+            # No hay match exacto. Primero revisa si es el MISMO proceso con
+            # el ultimo digito (consecutivo/instancia) distinto -- ese caso
+            # SI se corrige automatico.
+            match_consecutivo = buscar_coincidencia_ultimo_digito(radicado_en_carpeta, procesos)
+            if match_consecutivo:
+                fila, numero, radicado_excel = match_consecutivo
+                match = (numero, fila)
+                radicado_para_nombre = radicado_excel
+                correccion = (radicado_en_carpeta, radicado_excel, fila, numero)
+            else:
+                # Revisa si hay una fila del Excel que difiera por 1 digito
+                # en cualquier posicion -- eso NO se corrige automatico.
+                coincidencia = buscar_coincidencia_cercana(radicado_en_carpeta, candidatos_cercanos)
+                if coincidencia:
+                    fila, numero, radicado_excel = coincidencia
+                    if radicado_excel != radicado_en_carpeta:  # evita reportar el propio match exacto
+                        posibles_coincidencias.append((carpeta.name, radicado_en_carpeta, numero, radicado_excel, fila))
+                sin_proceso_en_excel.append(carpeta.name)
+                continue
+
+        radicados_encontrados_en_disco.add(radicado_para_nombre)
         numero, fila = match
 
-        if nombre_ya_correcto(carpeta.name, numero, radicado):
+        if correccion:
+            radicado_viejo, radicado_nuevo, fila_excel, numero_excel = correccion
+            logging.warning(
+                "[Consecutivo] Carpeta '%s': el radicado termina en '%s' pero el informe (fila %s, "
+                "proceso %s) tiene el mismo proceso terminado en '%s'; se corrige al del informe.",
+                carpeta.name, radicado_viejo[-1], fila_excel, numero_excel, radicado_nuevo[-1],
+            )
+
+        if nombre_ya_correcto(carpeta.name, numero, radicado_para_nombre):
             ya_correctas += 1
             continue
 
-        nuevo_nombre = f"{numero}. {radicado}"
+        nuevo_nombre = f"{numero}. {radicado_para_nombre}"
         destino = carpeta.parent / nuevo_nombre
 
         if destino.exists():
@@ -346,9 +398,9 @@ def procesar():
             continue
 
         # Re-verificacion justo antes de renombrar: vuelve a leer el radicado
-        # de la carpeta una vez mas y confirma que sigue siendo el mismo.
+        # ORIGINAL de la carpeta una vez mas y confirma que sigue siendo el mismo.
         radicado_confirmado = radicado_de_nombre_carpeta(carpeta.name)
-        if radicado_confirmado != radicado:
+        if radicado_confirmado != radicado_en_carpeta:
             logging.error(
                 "[Seguridad] '%s' cambio de nombre justo antes de renombrarla; se omite por seguridad.",
                 carpeta.name,
@@ -361,6 +413,8 @@ def procesar():
             carpeta.rename(destino)
             logging.info("[Renombrada] '%s'  ->  '%s'", carpeta.name, nuevo_nombre)
         renombradas.append((carpeta.name, nuevo_nombre))
+        if correccion:
+            correcciones_consecutivo.append((carpeta.name, nuevo_nombre))
 
     sin_carpeta_en_disco = 0
     for fila, numero, radicado in procesos:
@@ -409,10 +463,12 @@ def procesar():
 
     logging.info("-" * 60)
     logging.info(
-        "Resumen: %d %s, %d ya tenian el nombre correcto, %d sin carpeta en disco, "
-        "%d carpetas sin proceso en el Excel, %d conflictos de nombre, %d posibles coincidencias para revisar.",
+        "Resumen: %d %s (de las cuales %d son correcciones de consecutivo/instancia), %d ya tenian el "
+        "nombre correcto, %d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de "
+        "nombre, %d posibles coincidencias para revisar.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
+        len(correcciones_consecutivo),
         ya_correctas, sin_carpeta_en_disco, len(sin_proceso_en_excel), conflictos, len(posibles_coincidencias),
     )
     if MODO_PRUEBA:

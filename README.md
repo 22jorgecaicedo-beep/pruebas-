@@ -196,6 +196,17 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    inválido en el Excel se reportan y se omiten del cruce, para no
    arriesgar un renombrado incorrecto).
 
+   Dos casos especiales:
+   - `[Consecutivo]`: la carpeta y el Excel coinciden en los primeros 22
+     dígitos del radicado y solo difieren en el último (el proceso ya
+     cambió de instancia, ej. de "...00" a "...01") — esto **sí se
+     corrige automático**, dejando el radicado del Excel.
+   - `[POSIBLE COINCIDENCIA]`: la carpeta y el Excel difieren por un
+     dígito de más o de menos en **otra** posición — esto **no** se
+     corrige solo, se reporta para que lo confirmes a mano (dos procesos
+     distintos del mismo juzgado y año pueden compartir casi todos los
+     dígitos, así que adivinar mal sería peligroso).
+
 5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
    correrlo para aplicar los renombrados de verdad. Puedes correrlo las
    veces que quieras: las carpetas que ya tengan el nombre correcto se
