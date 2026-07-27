@@ -242,6 +242,19 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    - `[Sin nombre reconocible]`: carpetas que no tienen ningún número que
      se parezca a un radicado en su nombre (antes se ignoraban en
      silencio, ahora se listan para que las revises a mano).
+   - `[Contenido no corresponde]`: abre los documentos DENTRO de cada
+     carpeta (nombres de archivo, y si hace falta el texto de hasta
+     `MAX_ARCHIVOS_CONTENIDO_A_REVISAR` PDF/DOCX) y revisa si el radicado
+     que aparece adentro corresponde con el radicado del nombre de la
+     carpeta. Si el radicado del nombre nunca aparece en su propio
+     contenido pero otro sí aparece claramente, se marca como sospechosa
+     de tener contenido de otro caso mal ubicado (esto fue justo lo que
+     pasó con algunos zips antes de la corrección del radicado-por-nombre-
+     de-zip). Queda además en un reporte aparte:
+     `contenido_no_corresponde.csv`. Esta revisión tarda más porque tiene
+     que leer documentos de todas las carpetas; puedes desactivarla
+     poniendo `VALIDAR_CONTENIDO_CONTRA_NOMBRE = False` si prefieres una
+     corrida rápida.
 
 5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
    correrlo para aplicar los renombrados de verdad. Puedes correrlo las

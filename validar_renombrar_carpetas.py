@@ -64,6 +64,14 @@ Verificacion mas profunda (solo detecta y reporta, no modifica nada):
   - Carpetas SIN NINGUN radicado reconocible en el nombre (ni siquiera
     21-24 digitos): antes se ignoraban en silencio, ahora se reportan
     aparte para que las revises a mano.
+  - CONTENIDO que no corresponde al nombre (VALIDAR_CONTENIDO_CONTRA_NOMBRE):
+    abre los documentos dentro de cada carpeta (nombres de archivo, y si
+    hace falta el texto de hasta MAX_ARCHIVOS_CONTENIDO_A_REVISAR PDF/DOCX)
+    y busca que radicados aparecen. Si el radicado del NOMBRE de la
+    carpeta nunca aparece adentro, pero otro radicado si aparece
+    claramente, se reporta como sospechoso de contenido mal ubicado. No
+    se marca si el propio radicado SI aparece (aunque tambien aparezcan
+    otros, por referencias cruzadas a casos relacionados).
 
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
@@ -86,9 +94,23 @@ import csv
 import logging
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import openpyxl
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        PdfReader = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
 
 # ============================= CONFIGURACION =============================
 
@@ -118,12 +140,25 @@ CARPETA_PROCESOS = r"D:/"
 # otro lado. Si la ruta no existe, esta revision simplemente se omite.
 CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 
+# True: al final, abre los documentos DENTRO de cada carpeta y revisa si
+# el radicado que aparece en su contenido corresponde con el radicado del
+# NOMBRE de la carpeta (detecta casos donde el contenido quedo mal
+# ubicado). Esto tarda mas en correr porque tiene que leer PDFs/DOCX de
+# todas las carpetas; ponlo en False si prefieres una corrida rapida.
+VALIDAR_CONTENIDO_CONTRA_NOMBRE = True
+
+# Cuantos archivos (como maximo) se leen POR CARPETA cuando ningun nombre
+# de archivo trae el radicado (para no tener que abrir los 50 PDF de una
+# carpeta con muchos documentos, con unos pocos alcanza para verificar).
+MAX_ARCHIVOS_CONTENIDO_A_REVISAR = 5
+
 # True: no renombra ni mueve nada, solo muestra/registra que haria
 # (recomendado la primera vez). False: aplica los cambios de verdad.
 MODO_PRUEBA = True
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_renombrar_carpetas.log")
 ARCHIVO_REPORTE_VACIAS = os.path.join(os.path.dirname(__file__), "carpetas_vacias.csv")
+ARCHIVO_REPORTE_CONTENIDO = os.path.join(os.path.dirname(__file__), "contenido_no_corresponde.csv")
 
 # Carpeta donde se mueven (nunca se borran) las copias duplicadas sobrantes.
 NOMBRE_CARPETA_DUPLICADOS = "Duplicados_para_revisar"
@@ -138,6 +173,15 @@ PATRON_RADICADO_EXACTO = re.compile(r"(?<!\d)\d{23}(?!\d)")
 # Radicado "casi bueno" (con 1 digito de mas o de menos), solo para poder
 # reportar posibles coincidencias -- nunca se usa para renombrar solo.
 PATRON_RADICADO_CERCANO = re.compile(r"(?<!\d)\d{21,24}(?!\d)")
+
+# Radicado escrito con separadores (ej. "68005-40-03-001-2023-00700"), tal
+# como a veces aparece DENTRO del texto de un documento (no en nombres de
+# carpeta). Solo se usa para la validacion de contenido.
+PATRON_RADICADO_CON_SEPARADORES = re.compile(
+    r"(?<!\d)\d{5}[\s\-]?\d{2}[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{4}[\s\-]?\d{5}[\s\-]?\d{2}(?!\d)"
+)
+
+EXTENSIONES_CONTENIDO = {".pdf", ".docx"}
 
 # ===========================================================================
 
@@ -338,6 +382,68 @@ def contar_archivos(carpeta: Path) -> int:
         return sum(1 for p in carpeta.rglob("*") if p.is_file())
     except OSError:
         return 0
+
+
+def _texto_de_pdf(ruta: Path) -> str:
+    if PdfReader is None:
+        return ""
+    try:
+        lector = PdfReader(str(ruta))
+        return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
+    except Exception:
+        return ""
+
+
+def _texto_de_docx(ruta: Path) -> str:
+    if docx is None:
+        return ""
+    try:
+        documento = docx.Document(str(ruta))
+        return "\n".join(p.text for p in documento.paragraphs)
+    except Exception:
+        return ""
+
+
+def _radicados_en_texto(texto: str):
+    """Todos los radicados de 23 digitos encontrados en un texto (no solo el primero)."""
+    encontrados = list(PATRON_RADICADO_EXACTO.findall(texto))
+    encontrados += [re.sub(r"[\s\-]", "", m) for m in PATRON_RADICADO_CON_SEPARADORES.findall(texto)]
+    return encontrados
+
+
+def radicados_encontrados_en_carpeta(carpeta: Path, max_archivos_contenido: int) -> Counter:
+    """
+    Recorre los archivos de una carpeta y devuelve un Counter con todos los
+    radicados de 23 digitos encontrados: primero en los NOMBRES de
+    archivo (rapido, sin abrir nada); si ninguno trae uno, lee el
+    contenido de hasta 'max_archivos_contenido' PDF/DOCX como muestra
+    (para no tener que abrir todos los documentos de carpetas grandes).
+    """
+    contador = Counter()
+    candidatos_contenido = []
+
+    try:
+        rutas = list(carpeta.rglob("*"))
+    except OSError:
+        return contador
+
+    for ruta in rutas:
+        if not ruta.is_file():
+            continue
+        for radicado in _radicados_en_texto(ruta.name):
+            contador[radicado] += 1
+        if ruta.suffix.lower() in EXTENSIONES_CONTENIDO:
+            candidatos_contenido.append(ruta)
+
+    if contador:
+        return contador
+
+    for ruta in candidatos_contenido[:max_archivos_contenido]:
+        texto = _texto_de_pdf(ruta) if ruta.suffix.lower() == ".pdf" else _texto_de_docx(ruta)
+        for radicado in _radicados_en_texto(texto):
+            contador[radicado] += 1
+
+    return contador
 
 
 def ruta_libre(carpeta_padre: Path, nombre: str) -> Path:
@@ -644,18 +750,26 @@ def procesar():
 
     carpetas_vacias = []       # (nombre, radicado_o_None, zip_encontrado_o_None)
     carpetas_sin_radicado = []  # nombres sin NINGUN radicado reconocible (ni exacto ni cercano)
+    contenido_no_corresponde = []  # (nombre, radicado_esperado, radicado_dominante_en_contenido, veces)
 
     carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS]
     for carpeta in carpetas_finales:
-        radicado_actual = radicado_de_nombre_carpeta(carpeta.name) or radicado_cercano_de_nombre_carpeta(carpeta.name)
+        radicado_exacto = radicado_de_nombre_carpeta(carpeta.name)
+        radicado_actual = radicado_exacto or radicado_cercano_de_nombre_carpeta(carpeta.name)
         if not radicado_actual:
             carpetas_sin_radicado.append(carpeta.name)
 
-        if contar_archivos(carpeta) == 0:
+        numero_archivos = contar_archivos(carpeta)
+        if numero_archivos == 0:
             zip_encontrado = None
             if radicado_actual and carpeta_descargas:
                 zip_encontrado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
             carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado))
+        elif VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
+            radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
+            if radicados_hallados and radicado_exacto not in radicados_hallados:
+                radicado_dominante, veces = radicados_hallados.most_common(1)[0]
+                contenido_no_corresponde.append((carpeta.name, radicado_exacto, radicado_dominante, veces))
 
     sin_carpeta_en_disco = 0
     for fila, numero, radicado in procesos:
@@ -704,6 +818,27 @@ def procesar():
             escritor.writerow([nombre, radicado_buscado or "", zip_encontrado or ""])
     if carpetas_vacias:
         logging.info("[Carpeta vacia] Reporte guardado en: %s", ARCHIVO_REPORTE_VACIAS)
+
+    if contenido_no_corresponde:
+        logging.warning(
+            "[Contenido no corresponde] %d carpeta(s): el radicado del NOMBRE nunca aparece dentro de sus "
+            "propios documentos, y en cambio se encontro otro radicado -- revisa si el contenido quedo mal "
+            "ubicado (por ejemplo por un zip que se proceso mal antes de esta correccion):",
+            len(contenido_no_corresponde),
+        )
+        for nombre, radicado_esperado, radicado_encontrado, veces in contenido_no_corresponde:
+            logging.warning(
+                "   - '%s': el nombre dice %s, pero encontre %s en su contenido (%d vez/veces).",
+                nombre, radicado_esperado, radicado_encontrado, veces,
+            )
+
+    with open(ARCHIVO_REPORTE_CONTENIDO, "w", newline="", encoding="utf-8-sig") as f:
+        escritor = csv.writer(f, delimiter=";")
+        escritor.writerow(["Carpeta", "Radicado del nombre", "Radicado encontrado en el contenido", "Veces"])
+        for nombre, radicado_esperado, radicado_encontrado, veces in contenido_no_corresponde:
+            escritor.writerow([nombre, radicado_esperado, radicado_encontrado, veces])
+    if contenido_no_corresponde:
+        logging.info("[Contenido no corresponde] Reporte guardado en: %s", ARCHIVO_REPORTE_CONTENIDO)
 
     if duplicados_sin_resolver:
         logging.warning(
@@ -788,13 +923,15 @@ def procesar():
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
-        "%d carpeta(s) vacia(s), %d carpeta(s) sin nombre reconocible.",
+        "%d carpeta(s) vacia(s), %d carpeta(s) sin nombre reconocible, "
+        "%d carpeta(s) con contenido que no corresponde al nombre.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
         reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
         len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_sin_radicado),
+        len(contenido_no_corresponde),
     )
     if MODO_PRUEBA:
         logging.info(
