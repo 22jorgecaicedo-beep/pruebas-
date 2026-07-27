@@ -216,6 +216,14 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    - `[Duplicado sin resolver]`: hay más de una carpeta con el mismo
      radicado, pero ese radicado no está en el Excel — no se puede saber
      cuál conservar, así que no se toca ninguna; revísalas a mano.
+   - `[Anidada]` / `[Anidadas resueltas]` / `[Anidadas de otro caso]`:
+     cuando una carpeta de proceso queda metida DENTRO de otra (ej.
+     `1014. radicado` adentro de `941. radicado`), también se resuelve
+     sola, sin borrar ni fusionar contenido — solo mueve la carpeta
+     completa. Si el radicado de la anidada es el mismo que el de la
+     carpeta que la contiene, se mueve a `Duplicados_para_revisar`. Si es
+     un radicado distinto (contenido de otro caso mal ubicado), se saca
+     al nivel principal del disco para evaluarla en la próxima corrida.
 
 5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
    correrlo para aplicar los renombrados de verdad. Puedes correrlo las

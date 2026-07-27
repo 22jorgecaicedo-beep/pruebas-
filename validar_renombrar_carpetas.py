@@ -46,6 +46,17 @@ cargado en RUTA_EXCEL, y mueve las demas copias (sin tocar su contenido)
 a una carpeta "Duplicados_para_revisar" dentro de CARPETA_PROCESOS, para
 que las revises y borres a mano si de verdad sobran.
 
+Carpetas ANIDADAS (una carpeta de proceso metida DENTRO de otra carpeta
+de proceso, ej. "1014. radicado" dentro de "941. radicado"): tambien se
+resuelven solas, sin borrar ni fusionar contenido -- solo se mueve la
+carpeta completa:
+  - Si el radicado de la anidada es el MISMO que el de la carpeta que la
+    contiene, se mueve a "Duplicados_para_revisar" (es una copia vieja
+    del mismo caso).
+  - Si el radicado es DISTINTO (contenido de otro caso que quedo mal
+    ubicado), se saca al nivel principal del disco para que se evalue
+    normal contra el Excel en la proxima corrida.
+
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
   - Carpetas duplicadas resueltas (cual se conservo, cuales se movieron).
@@ -321,6 +332,20 @@ def ruta_libre(carpeta_padre: Path, nombre: str) -> Path:
     return destino
 
 
+def subcarpetas_con_radicado(carpeta_padre: Path):
+    """Subcarpetas DIRECTAS (un solo nivel) de carpeta_padre que tengan un radicado EXACTO de 23 digitos en su nombre."""
+    encontradas = []
+    try:
+        for hijo in carpeta_padre.iterdir():
+            if hijo.is_dir():
+                radicado_hijo = radicado_de_nombre_carpeta(hijo.name)
+                if radicado_hijo:
+                    encontradas.append((hijo, radicado_hijo))
+    except OSError:
+        pass
+    return encontradas
+
+
 def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, radicado_original: str, reporte: dict) -> bool:
     """
     Intenta renombrar 'carpeta' a 'numero. radicado_final', con las
@@ -520,6 +545,58 @@ def procesar():
                 fila, numero, radicado_excel = coincidencia
                 posibles_coincidencias.append((carpeta.name, radicado_cercano, numero, radicado_excel, fila))
 
+    # --- Carpetas de proceso ANIDADAS dentro de otra carpeta de proceso
+    # (ej. "1014. radicado" metida dentro de "941. radicado"). Se revisan
+    # DESPUES de lo anterior, releyendo el disco de verdad, para que
+    # reflejen los nombres ya corregidos en este mismo corrida. Nunca se
+    # borra ni se fusiona contenido -- solo se mueve la carpeta completa.
+    anidadas_mismo_caso = []  # (carpeta_padre, nombre_anidada, nombre_destino)
+    anidadas_otro_caso = []   # (carpeta_padre, nombre_anidada, radicado_anidado, nombre_destino)
+
+    carpetas_nivel_superior_ahora = [
+        d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS
+    ]
+    for carpeta_padre in carpetas_nivel_superior_ahora:
+        radicado_padre = radicado_de_nombre_carpeta(carpeta_padre.name)
+        if not radicado_padre:
+            continue
+
+        for hijo, radicado_hijo in subcarpetas_con_radicado(carpeta_padre):
+            if radicado_hijo == radicado_padre:
+                destino = ruta_libre(carpeta_duplicados, hijo.name)
+                if MODO_PRUEBA:
+                    logging.info(
+                        "[SIMULACION-Anidada] '%s' esta metida dentro de '%s' y es una copia del MISMO caso "
+                        "(mismo radicado); se moveria a '%s/%s'.",
+                        hijo.name, carpeta_padre.name, NOMBRE_CARPETA_DUPLICADOS, destino.name,
+                    )
+                else:
+                    carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+                    hijo.rename(destino)
+                    logging.info(
+                        "[Anidada] '%s' estaba metida dentro de '%s' (mismo radicado); se movio a '%s/%s'.",
+                        hijo.name, carpeta_padre.name, NOMBRE_CARPETA_DUPLICADOS, destino.name,
+                    )
+                    movidos_a_auditar.append((hijo.name, destino))
+                anidadas_mismo_caso.append((carpeta_padre.name, hijo.name, destino.name))
+            else:
+                destino = ruta_libre(carpeta_raiz, hijo.name)
+                if MODO_PRUEBA:
+                    logging.info(
+                        "[SIMULACION-Anidada] '%s' esta metida dentro de '%s' pero tiene un radicado DISTINTO "
+                        "(%s); se sacaria al nivel principal del disco como '%s' para evaluarla en la proxima corrida.",
+                        hijo.name, carpeta_padre.name, radicado_hijo, destino.name,
+                    )
+                else:
+                    hijo.rename(destino)
+                    logging.info(
+                        "[Anidada] '%s' estaba metida dentro de '%s' con un radicado DISTINTO (%s); se saco al "
+                        "nivel principal del disco como '%s' para evaluarla en la proxima corrida.",
+                        hijo.name, carpeta_padre.name, radicado_hijo, destino.name,
+                    )
+                    movidos_a_auditar.append((hijo.name, destino))
+                anidadas_otro_caso.append((carpeta_padre.name, hijo.name, radicado_hijo, destino.name))
+
     sin_carpeta_en_disco = 0
     for fila, numero, radicado in procesos:
         if radicado not in radicados_encontrados_en_disco:
@@ -567,6 +644,26 @@ def procesar():
                 logging.info("   - Radicado %s: se conservo '%s'; se movio '%s' -> '%s/%s'",
                              radicado, nombre_conservado, nombre_movido, NOMBRE_CARPETA_DUPLICADOS, nombre_destino)
 
+    if anidadas_mismo_caso:
+        logging.info(
+            "[Anidadas resueltas] %d carpeta(s) estaban metidas dentro de otra carpeta del MISMO caso; "
+            "se sacaron a '%s' (nada se borro):",
+            len(anidadas_mismo_caso), NOMBRE_CARPETA_DUPLICADOS,
+        )
+        for nombre_padre, nombre_anidada, nombre_destino in anidadas_mismo_caso:
+            logging.info("   - '%s' (estaba dentro de '%s') -> '%s/%s'",
+                         nombre_anidada, nombre_padre, NOMBRE_CARPETA_DUPLICADOS, nombre_destino)
+
+    if anidadas_otro_caso:
+        logging.warning(
+            "[Anidadas de otro caso] %d carpeta(s) estaban metidas dentro de la carpeta de OTRO proceso "
+            "(radicado distinto); se sacaron al nivel principal del disco para evaluarlas en la proxima corrida:",
+            len(anidadas_otro_caso),
+        )
+        for nombre_padre, nombre_anidada, radicado_anidado, nombre_destino in anidadas_otro_caso:
+            logging.warning("   - '%s' (radicado %s, estaba dentro de '%s') -> '%s'",
+                            nombre_anidada, radicado_anidado, nombre_padre, nombre_destino)
+
     # --- Auditoria final: si se aplicaron cambios de verdad, vuelve a leer
     # el disco y confirma que cada carpeta (renombrada o movida) quedo
     # donde se esperaba ---
@@ -594,11 +691,13 @@ def procesar():
     logging.info("-" * 60)
     logging.info(
         "Resumen: %d %s, %d ya tenian el nombre correcto, %d duplicado(s) resuelto(s) (movidos a %s), "
+        "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
         reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
+        len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
         len(duplicados_sin_resolver),
     )
