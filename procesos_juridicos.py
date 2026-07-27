@@ -375,25 +375,44 @@ def texto_de_docx(ruta_docx: str) -> str:
         return ""
 
 
+def radicado_de_texto(texto: str):
+    for patron in PATRONES_RADICADO:
+        m = re.search(patron, texto)
+        if m:
+            return re.sub(r"[\s\-]", "", m.group(0))
+    return None
+
+
+def radicado_del_nombre_zip(ruta_zip: str):
+    """El radicado que ya viene en el nombre del zip descargado (si lo trae), que es la fuente mas confiable -- viene de donde se comparte/descarga el caso, no de adivinar buscando en el contenido."""
+    return radicado_de_texto(Path(ruta_zip).stem)
+
+
 def buscar_radicado(carpeta_extraida: str):
+    """
+    Busca el radicado DENTRO de los archivos ya extraidos (nombre de
+    archivo primero, luego contenido de PDF/DOCX). Se usa solo como
+    respaldo cuando el propio nombre del zip no trae el radicado --
+    buscar dentro del contenido es menos confiable, porque un documento
+    puede mencionar el radicado de OTRO proceso relacionado (remisiones,
+    referencias a un caso anterior, etc).
+    """
     for raiz, _dirs, archivos in os.walk(carpeta_extraida):
         for nombre_archivo in archivos:
             ruta = os.path.join(raiz, nombre_archivo)
             extension = Path(nombre_archivo).suffix.lower()
 
-            for patron in PATRONES_RADICADO:
-                m = re.search(patron, nombre_archivo)
-                if m:
-                    return re.sub(r"[\s\-]", "", m.group(0))
+            radicado = radicado_de_texto(nombre_archivo)
+            if radicado:
+                return radicado
 
             if extension not in EXTENSIONES_A_REVISAR:
                 continue
             texto = texto_de_pdf(ruta) if extension == ".pdf" else texto_de_docx(ruta)
 
-            for patron in PATRONES_RADICADO:
-                m = re.search(patron, texto)
-                if m:
-                    return re.sub(r"[\s\-]", "", m.group(0))
+            radicado = radicado_de_texto(texto)
+            if radicado:
+                return radicado
     return None
 
 
@@ -435,13 +454,23 @@ def procesar_zip_manual(ruta_zip: str):
             nombre_zip, archivos_extraidos, archivos_fallidos,
         )
 
-    radicado = buscar_radicado(carpeta_extraida)
+    # Primero el radicado que ya venga en el NOMBRE del zip (mas confiable,
+    # viene de la fuente original), y solo si no trae ninguno, se busca
+    # adentro de los documentos extraidos (menos confiable: un documento
+    # puede mencionar el radicado de otro proceso relacionado).
+    radicado = radicado_del_nombre_zip(ruta_zip)
+    if radicado:
+        logging.info("[Manual] Radicado tomado del nombre de %s: %s", nombre_zip, radicado)
+    else:
+        radicado = buscar_radicado(carpeta_extraida)
+        if radicado:
+            logging.info("[Manual] Radicado encontrado dentro de los documentos de %s: %s", nombre_zip, radicado)
+
     if radicado:
         nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(radicado))
-        logging.info("[Manual] Radicado encontrado para %s: %s", nombre_zip, radicado)
     else:
         nombre_final = sanear_nombre(Path(ruta_zip).stem)
-        logging.warning("[Manual] No se encontro radicado en %s. Se usara: %s", nombre_zip, nombre_final)
+        logging.warning("[Manual] No se encontro radicado en %s (ni en el nombre ni en el contenido). Se usara: %s", nombre_zip, nombre_final)
 
     destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
     shutil.move(carpeta_extraida, destino_final)
