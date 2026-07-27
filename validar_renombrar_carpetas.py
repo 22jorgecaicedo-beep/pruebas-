@@ -82,6 +82,7 @@ que haria). Revisa el reporte y, cuando confies en que el cruce esta bien,
 cambia MODO_PRUEBA a False para aplicar los cambios de verdad.
 """
 
+import csv
 import logging
 import os
 import re
@@ -122,6 +123,7 @@ CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 MODO_PRUEBA = True
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_renombrar_carpetas.log")
+ARCHIVO_REPORTE_VACIAS = os.path.join(os.path.dirname(__file__), "carpetas_vacias.csv")
 
 # Carpeta donde se mueven (nunca se borran) las copias duplicadas sobrantes.
 NOMBRE_CARPETA_DUPLICADOS = "Duplicados_para_revisar"
@@ -694,6 +696,14 @@ def procesar():
                 )
             else:
                 logging.warning("   - '%s': vacia y sin radicado reconocible en el nombre.", nombre)
+
+    with open(ARCHIVO_REPORTE_VACIAS, "w", newline="", encoding="utf-8-sig") as f:
+        escritor = csv.writer(f, delimiter=";")
+        escritor.writerow(["Carpeta", "Radicado", "Zip pendiente en Descargas"])
+        for nombre, radicado_buscado, zip_encontrado in carpetas_vacias:
+            escritor.writerow([nombre, radicado_buscado or "", zip_encontrado or ""])
+    if carpetas_vacias:
+        logging.info("[Carpeta vacia] Reporte guardado en: %s", ARCHIVO_REPORTE_VACIAS)
 
     if duplicados_sin_resolver:
         logging.warning(
