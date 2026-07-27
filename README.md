@@ -233,12 +233,15 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      un radicado distinto (contenido de otro caso mal ubicado), se saca
      al nivel principal del disco para evaluarla en la próxima corrida.
    - `[Carpeta vacía]`: carpetas sin ningún archivo adentro. El script
-     revisa si hay un `.zip` en `CARPETA_DESCARGAS` con ese mismo
-     radicado (por si quedó pendiente de extraer) y te lo señala — esto
-     solo se reporta, no se extrae ni se toca nada automático. Además de
-     salir en el log, queda un reporte aparte en `carpetas_vacias.csv`
-     (carpeta, radicado, y el zip pendiente si lo encontró) para que lo
-     revises en Excel sin tener que buscar en el log completo.
+     revisa si hay un `.zip` con ese mismo radicado, tanto en
+     `CARPETA_DESCARGAS` directamente como en su subcarpeta `Procesados`
+     (ahí es donde quedaban los zips que en versiones viejas del programa
+     se marcaban como "ya procesados" aunque la extracción hubiera
+     fallado por completo) y te lo señala — esto solo se reporta, no se
+     extrae ni se toca nada automático. Además de salir en el log, queda
+     un reporte aparte en `carpetas_vacias.csv` (carpeta, radicado, el
+     zip encontrado, y si estaba en Descargas o en Procesados) para que
+     lo revises en Excel sin tener que buscar en el log completo.
    - `[Sin nombre reconocible]`: carpetas que no tienen ningún número que
      se parezca a un radicado en su nombre (antes se ignoraban en
      silencio, ahora se listan para que las revises a mano).

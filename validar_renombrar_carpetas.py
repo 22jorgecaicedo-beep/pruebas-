@@ -470,15 +470,35 @@ def subcarpetas_con_radicado(carpeta_padre: Path):
     return encontradas
 
 
-def buscar_zip_con_radicado(carpeta_descargas: Path, radicado: str):
-    """Busca en carpeta_descargas un .zip cuyo nombre contenga ese radicado exacto. Devuelve el nombre del archivo, o None."""
+def _buscar_zip_en_carpeta(carpeta: Path, radicado: str):
     try:
-        for archivo in carpeta_descargas.iterdir():
+        for archivo in carpeta.iterdir():
             if archivo.is_file() and archivo.suffix.lower() == ".zip":
                 if radicado_de_nombre_carpeta(archivo.stem) == radicado or radicado_cercano_de_nombre_carpeta(archivo.stem) == radicado:
                     return archivo.name
     except OSError:
         pass
+    return None
+
+
+def buscar_zip_con_radicado(carpeta_descargas: Path, radicado: str):
+    """
+    Busca un .zip cuyo nombre contenga ese radicado exacto, primero en
+    carpeta_descargas directamente y despues en su subcarpeta
+    "Procesados" (ahi es donde procesos_juridicos.py movia el zip incluso
+    cuando la extraccion fallaba por completo, antes de que eso se
+    corrigiera). Devuelve (nombre_archivo, "Descargas" o "Descargas/Procesados"), o None.
+    """
+    encontrado = _buscar_zip_en_carpeta(carpeta_descargas, radicado)
+    if encontrado:
+        return encontrado, "Descargas"
+
+    carpeta_procesados = carpeta_descargas / "Procesados"
+    if carpeta_procesados.exists():
+        encontrado = _buscar_zip_en_carpeta(carpeta_procesados, radicado)
+        if encontrado:
+            return encontrado, "Descargas/Procesados"
+
     return None
 
 
@@ -761,10 +781,12 @@ def procesar():
 
         numero_archivos = contar_archivos(carpeta)
         if numero_archivos == 0:
-            zip_encontrado = None
+            zip_encontrado, zip_ubicacion = None, None
             if radicado_actual and carpeta_descargas:
-                zip_encontrado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
-            carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado))
+                resultado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
+                if resultado:
+                    zip_encontrado, zip_ubicacion = resultado
+            carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
         elif VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
             radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
             if radicados_hallados and radicado_exacto not in radicados_hallados:
@@ -796,16 +818,19 @@ def procesar():
 
     if carpetas_vacias:
         logging.warning("[Carpeta vacia] %d carpeta(s) no tienen ningun archivo adentro:", len(carpetas_vacias))
-        for nombre, radicado_buscado, zip_encontrado in carpetas_vacias:
+        for nombre, radicado_buscado, zip_encontrado, zip_ubicacion in carpetas_vacias:
             if zip_encontrado:
                 logging.warning(
-                    "   - '%s': vacia, y encontre un .zip SIN PROCESAR en Descargas que parece ser el mismo "
-                    "caso: '%s' -- revisalo, puede que falto extraerlo.",
-                    nombre, zip_encontrado,
+                    "   - '%s': vacia, y encontre un .zip en %s que parece ser el mismo caso: '%s' -- "
+                    "revisalo, puede que la extraccion haya fallado (ej. protegido con contrasena) o quede "
+                    "pendiente.",
+                    nombre, zip_ubicacion, zip_encontrado,
                 )
             elif radicado_buscado:
                 logging.warning(
-                    "   - '%s': vacia, no encontre ningun .zip en Descargas con el radicado %s.",
+                    "   - '%s': vacia, no encontre ningun .zip (ni en Descargas ni en Procesados) con el "
+                    "radicado %s. Puede que el zip original ya no exista, o que el radicado de esta carpeta "
+                    "sea el equivocado (ver [Contenido no corresponde] mas abajo).",
                     nombre, radicado_buscado,
                 )
             else:
@@ -813,9 +838,9 @@ def procesar():
 
     with open(ARCHIVO_REPORTE_VACIAS, "w", newline="", encoding="utf-8-sig") as f:
         escritor = csv.writer(f, delimiter=";")
-        escritor.writerow(["Carpeta", "Radicado", "Zip pendiente en Descargas"])
-        for nombre, radicado_buscado, zip_encontrado in carpetas_vacias:
-            escritor.writerow([nombre, radicado_buscado or "", zip_encontrado or ""])
+        escritor.writerow(["Carpeta", "Radicado", "Zip pendiente encontrado", "Donde se encontro"])
+        for nombre, radicado_buscado, zip_encontrado, zip_ubicacion in carpetas_vacias:
+            escritor.writerow([nombre, radicado_buscado or "", zip_encontrado or "", zip_ubicacion or ""])
     if carpetas_vacias:
         logging.info("[Carpeta vacia] Reporte guardado en: %s", ARCHIVO_REPORTE_VACIAS)
 
