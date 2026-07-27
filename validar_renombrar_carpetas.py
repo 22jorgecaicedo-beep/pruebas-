@@ -46,6 +46,17 @@ cargado en RUTA_EXCEL, y mueve las demas copias (sin tocar su contenido)
 a una carpeta "Duplicados_para_revisar" dentro de CARPETA_PROCESOS, para
 que las revises y borres a mano si de verdad sobran.
 
+RADICADO REPETIDO EN EL EXCEL (el mismo radicado aparece en dos o mas
+filas, con numeros de proceso DISTINTOS -- ej. proceso 19 y proceso 451
+con exactamente el mismo radicado): en vez de excluir esas filas del
+cruce, el script DUPLICA la carpeta: conserva/renombra la carpeta
+existente con el PRIMER numero de proceso, y crea una copia COMPLETA
+(mismo contenido) por cada numero adicional, para que cada numero de
+proceso tenga su propia carpeta "numero. radicado". No se borra ni se
+modifica el Excel -- se asume que si el radicado esta dos veces a
+proposito, cada proceso necesita su copia. Al final se informa
+claramente cuales radicados se duplicaron y en que carpetas quedaron.
+
 Carpetas ANIDADAS (una carpeta de proceso metida DENTRO de otra carpeta
 de proceso, ej. "1014. radicado" dentro de "941. radicado"): tambien se
 resuelven solas, sin borrar ni fusionar contenido -- solo se mueve la
@@ -96,6 +107,7 @@ import csv
 import logging
 import os
 import re
+import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -285,8 +297,25 @@ def leer_filas_excel(silencioso=False):
     return filas_validas, filas_casi_validas
 
 
-def quitar_repetidos(filas, silencioso=False):
-    """Excluye del cruce cualquier numero de proceso o radicado que aparezca en mas de una fila, reportando el conflicto."""
+def quitar_repetidos(filas, silencioso=False, permitir_duplicados_radicado=False):
+    """
+    Excluye del cruce cualquier NUMERO de proceso que aparezca en mas de una
+    fila (eso siempre es ambiguo: no hay forma segura de saber a cual
+    carpeta corresponde cada fila).
+
+    Para RADICADOS repetidos (mismo radicado en dos o mas filas, con
+    numeros de proceso distintos):
+      - permitir_duplicados_radicado=False (comportamiento de siempre):
+        esas filas tambien se excluyen del cruce.
+      - permitir_duplicados_radicado=True: esas filas NO se excluyen; en
+        vez de eso se devuelven aparte, en un diccionario
+        {radicado: [(fila, numero), ...]}, para que el llamador las trate
+        como carpetas a DUPLICAR (una copia por cada numero de proceso)
+        en vez de como un conflicto.
+
+    Devuelve la lista de filas sin repetidos si permitir_duplicados_radicado
+    es False, o (filas_sin_repetidos, radicados_duplicados) si es True.
+    """
     filas_por_numero = {}
     filas_por_radicado = {}
     for fila, numero, radicado in filas:
@@ -302,17 +331,40 @@ def quitar_repetidos(filas, silencioso=False):
                 "[Excel] Numero de proceso %s aparece en varias filas (%s); esas filas se omiten del cruce.",
                 numero, filas_por_numero[numero],
             )
-        for radicado in radicados_repetidos:
-            logging.warning(
-                "[Excel] Radicado %s aparece en varias filas (%s); esas filas se omiten del cruce.",
-                radicado, filas_por_radicado[radicado],
-            )
+        if not permitir_duplicados_radicado:
+            for radicado in radicados_repetidos:
+                logging.warning(
+                    "[Excel] Radicado %s aparece en varias filas (%s); esas filas se omiten del cruce.",
+                    radicado, filas_por_radicado[radicado],
+                )
 
-    return [
+    filas_limpias = [
         (fila, numero, radicado)
         for fila, numero, radicado in filas
-        if numero not in numeros_repetidos and radicado not in radicados_repetidos
+        if numero not in numeros_repetidos
+        and (permitir_duplicados_radicado or radicado not in radicados_repetidos)
     ]
+
+    if not permitir_duplicados_radicado:
+        return filas_limpias
+
+    radicados_duplicados = {}
+    filas_normales = []
+    for fila, numero, radicado in filas_limpias:
+        if radicado in radicados_repetidos:
+            radicados_duplicados.setdefault(radicado, []).append((fila, numero))
+        else:
+            filas_normales.append((fila, numero, radicado))
+
+    if not silencioso:
+        for radicado, entradas in radicados_duplicados.items():
+            logging.warning(
+                "[Excel] Radicado %s aparece en %d filas con numeros de proceso distintos (%s); se "
+                "duplicara la carpeta para que cada numero tenga su propia copia.",
+                radicado, len(entradas), [numero for _fila, numero in entradas],
+            )
+
+    return filas_normales, radicados_duplicados
 
 
 def leer_procesos_validos(silencioso=False):
@@ -570,12 +622,18 @@ def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, 
 def procesar():
     # --- Doble lectura independiente del Excel, para confirmar que el
     # resultado es estable antes de tocar ninguna carpeta ---
-    procesos_1, casi_validos_1 = leer_procesos_validos(silencioso=False)
-    procesos_2, casi_validos_2 = leer_procesos_validos(silencioso=True)
+    validas_1, casi_validas_1 = leer_filas_excel(silencioso=False)
+    validas_2, casi_validas_2 = leer_filas_excel(silencioso=True)
+
+    procesos_1, radicados_duplicar_1 = quitar_repetidos(validas_1, silencioso=False, permitir_duplicados_radicado=True)
+    procesos_2, radicados_duplicar_2 = quitar_repetidos(validas_2, silencioso=True, permitir_duplicados_radicado=True)
+    procesos_casi_validos = quitar_repetidos(casi_validas_1, silencioso=True)
 
     dict_1 = {radicado: numero for _f, numero, radicado in procesos_1}
     dict_2 = {radicado: numero for _f, numero, radicado in procesos_2}
-    if dict_1 != dict_2:
+    dup_1 = {r: sorted(numero for _fila, numero in entradas) for r, entradas in radicados_duplicar_1.items()}
+    dup_2 = {r: sorted(numero for _fila, numero in entradas) for r, entradas in radicados_duplicar_2.items()}
+    if dict_1 != dict_2 or dup_1 != dup_2:
         logging.error(
             "[Seguridad] La primera y la segunda lectura del Excel NO coinciden (¿se esta editando el "
             "archivo justo ahora?). Por seguridad no se toca ninguna carpeta. Cierra el Excel si lo "
@@ -584,11 +642,17 @@ def procesar():
         return
 
     procesos = procesos_1
-    procesos_casi_validos = casi_validos_1
+    radicados_para_duplicar = radicados_duplicar_1
     logging.info(
         "Excel: %d proceso(s) con radicado valido y sin repetir, confirmados en dos lecturas independientes.",
         len(procesos),
     )
+    if radicados_para_duplicar:
+        logging.info(
+            "Excel: %d radicado(s) aparecen en mas de una fila con numeros de proceso distintos; se "
+            "duplicara la carpeta correspondiente para cada numero (ver [Duplicado en Excel] mas abajo).",
+            len(radicados_para_duplicar),
+        )
 
     por_radicado = {radicado: (numero, fila) for fila, numero, radicado in procesos}
 
@@ -619,6 +683,7 @@ def procesar():
     posibles_coincidencias = []
     duplicados_resueltos = []  # (radicado, nombre_conservado_nuevo, [(nombre_movido, destino_dup)])
     duplicados_sin_resolver = []  # (radicado, [nombres]) -- no se pudo determinar el numero
+    duplicados_por_excel = []  # (radicado, [numeros], [nombres_de_carpeta_resultantes])
     movidos_a_auditar = []  # (nombre_original, ruta_destino) para la revision final
 
     candidatos_cercanos = procesos_casi_validos + [
@@ -626,6 +691,83 @@ def procesar():
     ]
 
     for radicado_en_carpeta, lista_carpetas in grupos_por_radicado.items():
+        # --- Radicado que aparece en el Excel en mas de una fila, con
+        # numeros de proceso DISTINTOS: se duplica la carpeta en vez de
+        # tratarlo como conflicto (ver quitar_repetidos). ---
+        entradas_duplicar = radicados_para_duplicar.get(radicado_en_carpeta)
+        if entradas_duplicar:
+            numeros_destino = sorted(numero for _fila, numero in entradas_duplicar)
+            radicados_encontrados_en_disco.add(radicado_en_carpeta)
+
+            # Si ademas hay mas de una carpeta en el disco con este mismo
+            # radicado, primero se consolida (se conserva la mas completa)
+            # para tener una sola carpeta de origen a partir de la cual duplicar.
+            conteos = [(carpeta, contar_archivos(carpeta)) for carpeta in lista_carpetas]
+            conteos.sort(key=lambda par: par[1], reverse=True)
+            carpeta_origen, archivos_origen = conteos[0]
+            otras = conteos[1:]
+
+            primer_numero = numeros_destino[0]
+            nombre_origen_final = f"{primer_numero}. {radicado_en_carpeta}"
+
+            movidas = []
+            for carpeta_extra, archivos_extra in otras:
+                destino_dup = ruta_libre(carpeta_duplicados, carpeta_extra.name)
+                if MODO_PRUEBA:
+                    logging.info(
+                        "[SIMULACION-Duplicado] '%s' (%d archivo(s)) se moveria a '%s/%s' -- se conserva "
+                        "'%s' (%d archivo(s)) como origen para duplicar segun el Excel.",
+                        carpeta_extra.name, archivos_extra, NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+                        carpeta_origen.name, archivos_origen,
+                    )
+                else:
+                    carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+                    carpeta_extra.rename(destino_dup)
+                    logging.info(
+                        "[Duplicado] '%s' (%d archivo(s)) se movio a '%s/%s' -- se conserva '%s' (%d "
+                        "archivo(s)) como origen para duplicar segun el Excel.",
+                        carpeta_extra.name, archivos_extra, NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+                        carpeta_origen.name, archivos_origen,
+                    )
+                    movidos_a_auditar.append((carpeta_extra.name, destino_dup))
+                movidas.append((carpeta_extra.name, destino_dup.name))
+            if movidas:
+                duplicados_resueltos.append((radicado_en_carpeta, nombre_origen_final, movidas))
+
+            renombro_ok = intentar_renombrar_carpeta(
+                carpeta_origen, primer_numero, radicado_en_carpeta, radicado_en_carpeta, reporte
+            )
+            if not renombro_ok:
+                # El conflicto ya quedo registrado por intentar_renombrar_carpeta;
+                # sin la carpeta origen en su lugar no es seguro duplicarla.
+                continue
+
+            ruta_origen_para_copiar = carpeta_origen if MODO_PRUEBA else (carpeta_origen.parent / nombre_origen_final)
+            nombres_resultantes = [nombre_origen_final]
+
+            for numero_extra in numeros_destino[1:]:
+                nombre_copia = f"{numero_extra}. {radicado_en_carpeta}"
+                destino_copia = ruta_libre(carpeta_raiz, nombre_copia)
+                if MODO_PRUEBA:
+                    logging.info(
+                        "[SIMULACION-Duplicado en Excel] Se crearia una copia de '%s' como '%s' (el radicado "
+                        "%s aparece %d veces en el Excel, con los procesos %s).",
+                        ruta_origen_para_copiar.name, destino_copia.name, radicado_en_carpeta,
+                        len(numeros_destino), numeros_destino,
+                    )
+                else:
+                    shutil.copytree(ruta_origen_para_copiar, destino_copia)
+                    logging.info(
+                        "[Duplicado en Excel] Se creo una copia de '%s' como '%s' (radicado %s duplicado en "
+                        "el Excel con los procesos %s).",
+                        ruta_origen_para_copiar.name, destino_copia.name, radicado_en_carpeta, numeros_destino,
+                    )
+                    movidos_a_auditar.append((f"copia de '{ruta_origen_para_copiar.name}'", destino_copia))
+                nombres_resultantes.append(destino_copia.name)
+
+            duplicados_por_excel.append((radicado_en_carpeta, numeros_destino, nombres_resultantes))
+            continue
+
         match = por_radicado.get(radicado_en_carpeta)
         radicado_final = radicado_en_carpeta
         correccion = None
@@ -920,6 +1062,18 @@ def procesar():
                 logging.info("   - Radicado %s: se conservo '%s'; se movio '%s' -> '%s/%s'",
                              radicado, nombre_conservado, nombre_movido, NOMBRE_CARPETA_DUPLICADOS, nombre_destino)
 
+    if duplicados_por_excel:
+        logging.info(
+            "[Duplicado en Excel] %d radicado(s) aparecian en el Excel dos o mas veces con numeros de "
+            "proceso distintos; se duplico la carpeta para que cada numero tenga la suya:",
+            len(duplicados_por_excel),
+        )
+        for radicado, numeros, nombres in duplicados_por_excel:
+            logging.info(
+                "   - Radicado %s (procesos %s): carpetas %s",
+                radicado, numeros, nombres,
+            )
+
     if anidadas_mismo_caso:
         logging.info(
             "[Anidadas resueltas] %d carpeta(s) estaban metidas dentro de otra carpeta del MISMO caso; "
@@ -967,6 +1121,7 @@ def procesar():
     logging.info("-" * 60)
     logging.info(
         "Resumen: %d %s, %d ya tenian el nombre correcto, %d duplicado(s) resuelto(s) (movidos a %s), "
+        "%d radicado(s) duplicado(s) en el Excel (carpeta duplicada para cada numero), "
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
@@ -975,6 +1130,7 @@ def procesar():
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
         reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
+        len(duplicados_por_excel),
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
         len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_sin_radicado),
