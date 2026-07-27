@@ -92,8 +92,9 @@ ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 # False (por defecto): el programa queda corriendo de fondo, vigilando
 # Descargas en tiempo real (y el correo, si hay credenciales) hasta que lo
 # cierres con Ctrl+C.
-# True: en vez de quedarse vigilando, organiza solo los .zip de HOY que ya
-# esten en CARPETA_DESCARGAS y termina solo (no vigila correo ni deja nada
+# True: en vez de quedarse vigilando, organiza solo los .zip de los
+# ultimos DIAS_ATRAS_PROCESAR_EXISTENTES dias que ya esten en
+# CARPETA_DESCARGAS y termina solo (no vigila correo ni deja nada
 # corriendo). Utilizalo si prefieres correr esto una vez al dia (por
 # ejemplo con el Programador de tareas de Windows) en vez de dejarlo
 # abierto todo el tiempo.
@@ -115,6 +116,11 @@ EXTENSIONES_A_REVISAR = {".pdf", ".docx"}
 ESPERA_ESTABILIDAD_SEGUNDOS = 3
 INTERVALO_CHEQUEO_SEGUNDOS = 1
 MAX_INTENTOS_ESTABILIDAD = 120
+
+# Al arrancar, cuantos dias hacia atras de zips ya existentes en Descargas
+# se procesan (1 = solo los de hoy). Los zips nuevos que aparezcan mientras
+# el programa esta corriendo se procesan en tiempo real sin importar esto.
+DIAS_ATRAS_PROCESAR_EXISTENTES = 7
 
 # --- Correo + portal SGDE (parte A) ---
 
@@ -442,18 +448,20 @@ class ManejadorDescargasManual(FileSystemEventHandler):
 
 def procesar_zips_manuales_existentes():
     """
-    Al iniciar, solo procesa los .zip de HOY que ya esten en Descargas
-    (para no reprocesar años de descargas viejas cada vez que arrancas el
-    programa). Los zips nuevos que aparezcan mientras el programa esta
-    corriendo se procesan en tiempo real sin importar la fecha.
+    Al iniciar, solo procesa los .zip de los ultimos DIAS_ATRAS_PROCESAR_EXISTENTES
+    dias que ya esten en Descargas (para no reprocesar años de descargas
+    viejas cada vez que arrancas el programa). Los zips nuevos que
+    aparezcan mientras el programa esta corriendo se procesan en tiempo
+    real sin importar la fecha.
     """
     hoy = datetime.date.today()
+    limite = hoy - datetime.timedelta(days=DIAS_ATRAS_PROCESAR_EXISTENTES - 1)
     for nombre in os.listdir(CARPETA_DESCARGAS):
         if not nombre.lower().endswith(".zip"):
             continue
         ruta = os.path.join(CARPETA_DESCARGAS, nombre)
         fecha_modificacion = datetime.date.fromtimestamp(os.path.getmtime(ruta))
-        if fecha_modificacion != hoy:
+        if fecha_modificacion < limite:
             continue
         try:
             procesar_zip_manual(ruta)
@@ -839,7 +847,10 @@ def main():
 
     if SOLO_PROCESAR_HOY_Y_SALIR:
         Path(CARPETA_TEMP_MANUAL).mkdir(parents=True, exist_ok=True)
-        logging.info("[Manual] SOLO_PROCESAR_HOY_Y_SALIR activo: organizando solo los zips de hoy en %s ...", CARPETA_DESCARGAS)
+        logging.info(
+            "[Manual] SOLO_PROCESAR_HOY_Y_SALIR activo: organizando los zips de los ultimos %d dia(s) en %s ...",
+            DIAS_ATRAS_PROCESAR_EXISTENTES, CARPETA_DESCARGAS,
+        )
         procesar_zips_manuales_existentes()
         logging.info("Listo, no se dejo nada vigilando (correo ni Descargas).")
         return

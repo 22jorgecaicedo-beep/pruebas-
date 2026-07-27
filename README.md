@@ -124,12 +124,17 @@ abierta— abre `procesos_juridicos.py` y cambia:
 SOLO_PROCESAR_HOY_Y_SALIR = True
 ```
 
-Con esto, cada vez que lo corras organiza únicamente los `.zip` de
-**hoy** que ya estén en `CARPETA_DESCARGAS` (igual que hace siempre al
-arrancar) y termina inmediatamente: no vigila el correo ni se queda
-esperando descargas nuevas. Si no tienes `credenciales_sgde.txt`, el
-correo ya se salta de por sí; este interruptor es para el otro caso,
+Con esto, cada vez que lo corras organiza únicamente los `.zip` de los
+últimos `DIAS_ATRAS_PROCESAR_EXISTENTES` días (por defecto 7, es decir la
+última semana) que ya estén en `CARPETA_DESCARGAS` (igual que hace
+siempre al arrancar) y termina inmediatamente: no vigila el correo ni se
+queda esperando descargas nuevas. Si no tienes `credenciales_sgde.txt`,
+el correo ya se salta de por sí; este interruptor es para el otro caso,
 cuando tampoco quieres que se quede vigilando Descargas.
+
+Ese mismo `DIAS_ATRAS_PROCESAR_EXISTENTES` controla también, al arrancar
+en modo vigilancia normal, cuántos días hacia atrás de zips ya existentes
+se procesan (ponlo en `1` si solo quieres los de hoy).
 
 ## Ejecutarlo automáticamente al iniciar Windows (opcional)
 
