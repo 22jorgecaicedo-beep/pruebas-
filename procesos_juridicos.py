@@ -85,7 +85,7 @@ CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 
 # Carpeta en el disco duro donde se organizan los procesos ya extraidos
 # (tu disco duro externo con los radicados).
-CARPETA_DESTINO = r"D:/"
+CARPETA_DESTINO = r"E:/"
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 

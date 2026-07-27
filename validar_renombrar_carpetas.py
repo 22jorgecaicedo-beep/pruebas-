@@ -134,7 +134,7 @@ COLUMNA_RADICADO = "RADICADO"
 # hoy tienen solo el radicado de 23 digitos como nombre): tu disco duro
 # externo. Si las carpetas estan dentro de otra carpeta ahi (no directo en
 # la raiz de D:), agrega esa carpeta aqui, ej: r"D:/Procesos".
-CARPETA_PROCESOS = r"D:/"
+CARPETA_PROCESOS = r"E:/"
 
 # Carpeta donde caen tus descargas (para revisar si una carpeta vacia tiene
 # un .zip pendiente de extraer ahi). Se detecta sola como "Downloads" del
