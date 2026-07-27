@@ -54,7 +54,7 @@ import openpyxl
 
 # ============================= CONFIGURACION =============================
 
-RUTA_EXCEL = os.path.join(os.path.expanduser("~"), "Desktop", "PARA REVISION.xlsm")
+RUTA_EXCEL = r"C:\Users\Francy\OneDrive\INFORME ENTREGA ESSA\PARA REVISION.xlsm"
 HOJA_EXCEL = "ACTIVOS"
 FILA_ENCABEZADO = 5
 COLUMNA_NO = "No."
