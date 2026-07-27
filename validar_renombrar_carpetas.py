@@ -115,7 +115,7 @@ except ImportError:
 # ============================= CONFIGURACION =============================
 
 # Ruta al informe de Excel (.xlsx o .xlsm).
-RUTA_EXCEL = r"C:\Users\User\Desktop\PARA REVISION.xlsm"
+RUTA_EXCEL = os.path.join(os.path.expanduser("~"), "Desktop", "PARA REVISION.xlsm")
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
 HOJA_EXCEL = "ACTIVOS"
