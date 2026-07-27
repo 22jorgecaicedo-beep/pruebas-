@@ -177,6 +177,9 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      del número de proceso y del radicado.
    - `CARPETA_PROCESOS`: carpeta del disco duro donde están las carpetas de
      cada proceso.
+   - `CARPETA_DESCARGAS`: tu carpeta de Descargas (se detecta sola). Se usa
+     solo para revisar si una carpeta vacía tiene un `.zip` pendiente de
+     extraer ahí.
 
    Esta misma configuración (`RUTA_EXCEL`, `HOJA_EXCEL`, etc) es la que usa
    `procesos_juridicos.py` para nombrar bien las carpetas nuevas apenas las
@@ -224,6 +227,13 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      carpeta que la contiene, se mueve a `Duplicados_para_revisar`. Si es
      un radicado distinto (contenido de otro caso mal ubicado), se saca
      al nivel principal del disco para evaluarla en la próxima corrida.
+   - `[Carpeta vacía]`: carpetas sin ningún archivo adentro. El script
+     revisa si hay un `.zip` en `CARPETA_DESCARGAS` con ese mismo
+     radicado (por si quedó pendiente de extraer) y te lo señala — esto
+     solo se reporta, no se extrae ni se toca nada automático.
+   - `[Sin nombre reconocible]`: carpetas que no tienen ningún número que
+     se parezca a un radicado en su nombre (antes se ignoraban en
+     silencio, ahora se listan para que las revises a mano).
 
 5. Si el reporte se ve bien, cambia `MODO_PRUEBA = False` y vuelve a
    correrlo para aplicar los renombrados de verdad. Puedes correrlo las

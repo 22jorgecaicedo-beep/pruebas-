@@ -57,12 +57,22 @@ carpeta completa:
     ubicado), se saca al nivel principal del disco para que se evalue
     normal contra el Excel en la proxima corrida.
 
+Verificacion mas profunda (solo detecta y reporta, no modifica nada):
+  - Carpetas VACIAS (sin ningun archivo adentro): se revisa si hay un
+    .zip en CARPETA_DESCARGAS cuyo nombre tenga ese mismo radicado, por
+    si quedo pendiente de extraer. Se reporta, no se extrae solo.
+  - Carpetas SIN NINGUN radicado reconocible en el nombre (ni siquiera
+    21-24 digitos): antes se ignoraban en silencio, ahora se reportan
+    aparte para que las revises a mano.
+
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
   - Carpetas duplicadas resueltas (cual se conservo, cuales se movieron).
   - Carpetas que ya tenian el nombre correcto (se dejan igual).
   - Procesos del Excel sin carpeta correspondiente en el disco.
   - Carpetas en el disco cuyo radicado no aparece en el Excel.
+  - Carpetas sin ningun radicado reconocible en el nombre.
+  - Carpetas vacias, y si se encontro un zip pendiente en Descargas.
   - Posibles coincidencias con un digito de mas o de menos (revisar a mano).
   - Filas del Excel con radicado invalido o con numero/radicado repetido
     (no se tocan, para no arriesgar un cruce incorrecto).
@@ -100,6 +110,12 @@ COLUMNA_RADICADO = "RADICADO"
 # externo. Si las carpetas estan dentro de otra carpeta ahi (no directo en
 # la raiz de D:), agrega esa carpeta aqui, ej: r"D:/Procesos".
 CARPETA_PROCESOS = r"D:/"
+
+# Carpeta donde caen tus descargas (para revisar si una carpeta vacia tiene
+# un .zip pendiente de extraer ahi). Se detecta sola como "Downloads" del
+# usuario de Windows actual; cambiala si tu carpeta de Descargas esta en
+# otro lado. Si la ruta no existe, esta revision simplemente se omite.
+CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 
 # True: no renombra ni mueve nada, solo muestra/registra que haria
 # (recomendado la primera vez). False: aplica los cambios de verdad.
@@ -344,6 +360,18 @@ def subcarpetas_con_radicado(carpeta_padre: Path):
     except OSError:
         pass
     return encontradas
+
+
+def buscar_zip_con_radicado(carpeta_descargas: Path, radicado: str):
+    """Busca en carpeta_descargas un .zip cuyo nombre contenga ese radicado exacto. Devuelve el nombre del archivo, o None."""
+    try:
+        for archivo in carpeta_descargas.iterdir():
+            if archivo.is_file() and archivo.suffix.lower() == ".zip":
+                if radicado_de_nombre_carpeta(archivo.stem) == radicado or radicado_cercano_de_nombre_carpeta(archivo.stem) == radicado:
+                    return archivo.name
+    except OSError:
+        pass
+    return None
 
 
 def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, radicado_original: str, reporte: dict) -> bool:
@@ -597,6 +625,36 @@ def procesar():
                     movidos_a_auditar.append((hijo.name, destino))
                 anidadas_otro_caso.append((carpeta_padre.name, hijo.name, radicado_hijo, destino.name))
 
+    # --- Verificacion mas profunda: carpetas vacias (y si hay un zip sin
+    # procesar en Descargas que parezca ser el mismo caso) y carpetas sin
+    # ningun radicado reconocible en el nombre (antes se ignoraban en
+    # silencio) ---
+    carpeta_descargas = None
+    if CARPETA_DESCARGAS:
+        candidata = Path(CARPETA_DESCARGAS)
+        if candidata.exists():
+            carpeta_descargas = candidata
+        else:
+            logging.warning(
+                "[Descargas] CARPETA_DESCARGAS configurada (%s) no existe; se omite la busqueda de zips pendientes.",
+                CARPETA_DESCARGAS,
+            )
+
+    carpetas_vacias = []       # (nombre, radicado_o_None, zip_encontrado_o_None)
+    carpetas_sin_radicado = []  # nombres sin NINGUN radicado reconocible (ni exacto ni cercano)
+
+    carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS]
+    for carpeta in carpetas_finales:
+        radicado_actual = radicado_de_nombre_carpeta(carpeta.name) or radicado_cercano_de_nombre_carpeta(carpeta.name)
+        if not radicado_actual:
+            carpetas_sin_radicado.append(carpeta.name)
+
+        if contar_archivos(carpeta) == 0:
+            zip_encontrado = None
+            if radicado_actual and carpeta_descargas:
+                zip_encontrado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
+            carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado))
+
     sin_carpeta_en_disco = 0
     for fila, numero, radicado in procesos:
         if radicado not in radicados_encontrados_en_disco:
@@ -610,6 +668,32 @@ def procesar():
         logging.warning("[Sin proceso] %d carpeta(s) con radicado que no aparece en el Excel:", len(sin_proceso_en_excel))
         for nombre in sin_proceso_en_excel:
             logging.warning("   - %s", nombre)
+
+    if carpetas_sin_radicado:
+        logging.warning(
+            "[Sin nombre reconocible] %d carpeta(s) no tienen ningun numero que se parezca a un radicado en "
+            "su nombre; revisalas a mano:",
+            len(carpetas_sin_radicado),
+        )
+        for nombre in carpetas_sin_radicado:
+            logging.warning("   - %s", nombre)
+
+    if carpetas_vacias:
+        logging.warning("[Carpeta vacia] %d carpeta(s) no tienen ningun archivo adentro:", len(carpetas_vacias))
+        for nombre, radicado_buscado, zip_encontrado in carpetas_vacias:
+            if zip_encontrado:
+                logging.warning(
+                    "   - '%s': vacia, y encontre un .zip SIN PROCESAR en Descargas que parece ser el mismo "
+                    "caso: '%s' -- revisalo, puede que falto extraerlo.",
+                    nombre, zip_encontrado,
+                )
+            elif radicado_buscado:
+                logging.warning(
+                    "   - '%s': vacia, no encontre ningun .zip en Descargas con el radicado %s.",
+                    nombre, radicado_buscado,
+                )
+            else:
+                logging.warning("   - '%s': vacia y sin radicado reconocible en el nombre.", nombre)
 
     if duplicados_sin_resolver:
         logging.warning(
@@ -693,13 +777,14 @@ def procesar():
         "Resumen: %d %s, %d ya tenian el nombre correcto, %d duplicado(s) resuelto(s) (movidos a %s), "
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
-        "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver.",
+        "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
+        "%d carpeta(s) vacia(s), %d carpeta(s) sin nombre reconocible.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
         reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
-        len(duplicados_sin_resolver),
+        len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_sin_radicado),
     )
     if MODO_PRUEBA:
         logging.info(
