@@ -163,6 +163,18 @@ ARCHIVO_REPORTE_CONTENIDO = os.path.join(os.path.dirname(__file__), "contenido_n
 # Carpeta donde se mueven (nunca se borran) las copias duplicadas sobrantes.
 NOMBRE_CARPETA_DUPLICADOS = "Duplicados_para_revisar"
 
+# Carpetas que NO son de un proceso y hay que ignorar siempre al escanear
+# CARPETA_PROCESOS: carpetas propias de Windows que existen en la raiz de
+# cualquier disco, y la carpeta temporal que usa procesos_juridicos.py
+# mientras extrae un zip (si CARPETA_DESTINO de ese script es la misma
+# CARPETA_PROCESOS de aqui, como es lo normal).
+CARPETAS_A_IGNORAR = {
+    NOMBRE_CARPETA_DUPLICADOS,
+    "System Volume Information",
+    "$RECYCLE.BIN",
+    "_tmp_extraccion",
+}
+
 # Radicado "bueno": exactamente 23 digitos, sin otro digito pegado antes o
 # despues (para no cortar mal un numero mas largo, ni colar uno mas corto).
 # No usamos \b porque \b trata "_" como parte de la palabra -- por ejemplo
@@ -572,7 +584,7 @@ def procesar():
 
     carpeta_raiz = Path(CARPETA_PROCESOS)
     carpeta_duplicados = carpeta_raiz / NOMBRE_CARPETA_DUPLICADOS
-    carpetas = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS]
+    carpetas = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
 
     # Agrupa las carpetas por su radicado EXACTO (ignora prefijo "numero."
     # y cualquier sufijo tipo "_2"). Las que no tengan un radicado exacto
@@ -710,7 +722,7 @@ def procesar():
     anidadas_otro_caso = []   # (carpeta_padre, nombre_anidada, radicado_anidado, nombre_destino)
 
     carpetas_nivel_superior_ahora = [
-        d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS
+        d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR
     ]
     for carpeta_padre in carpetas_nivel_superior_ahora:
         radicado_padre = radicado_de_nombre_carpeta(carpeta_padre.name)
@@ -772,7 +784,7 @@ def procesar():
     carpetas_sin_radicado = []  # nombres sin NINGUN radicado reconocible (ni exacto ni cercano)
     contenido_no_corresponde = []  # (nombre, radicado_esperado, radicado_dominante_en_contenido, veces)
 
-    carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name != NOMBRE_CARPETA_DUPLICADOS]
+    carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
     for carpeta in carpetas_finales:
         radicado_exacto = radicado_de_nombre_carpeta(carpeta.name)
         radicado_actual = radicado_exacto or radicado_cercano_de_nombre_carpeta(carpeta.name)

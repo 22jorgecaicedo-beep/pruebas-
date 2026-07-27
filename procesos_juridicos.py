@@ -120,7 +120,7 @@ MAX_INTENTOS_ESTABILIDAD = 120
 # Al arrancar, cuantos dias hacia atras de zips ya existentes en Descargas
 # se procesan (1 = solo los de hoy). Los zips nuevos que aparezcan mientras
 # el programa esta corriendo se procesan en tiempo real sin importar esto.
-DIAS_ATRAS_PROCESAR_EXISTENTES = 7
+DIAS_ATRAS_PROCESAR_EXISTENTES = 14
 
 # --- Correo + portal SGDE (parte A) ---
 

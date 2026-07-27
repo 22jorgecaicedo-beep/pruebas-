@@ -125,8 +125,8 @@ SOLO_PROCESAR_HOY_Y_SALIR = True
 ```
 
 Con esto, cada vez que lo corras organiza únicamente los `.zip` de los
-últimos `DIAS_ATRAS_PROCESAR_EXISTENTES` días (por defecto 7, es decir la
-última semana) que ya estén en `CARPETA_DESCARGAS` (igual que hace
+últimos `DIAS_ATRAS_PROCESAR_EXISTENTES` días (por defecto 14, es decir
+las últimas dos semanas) que ya estén en `CARPETA_DESCARGAS` (igual que hace
 siempre al arrancar) y termina inmediatamente: no vigila el correo ni se
 queda esperando descargas nuevas. Si no tienes `credenciales_sgde.txt`,
 el correo ya se salta de por sí; este interruptor es para el otro caso,
@@ -335,3 +335,15 @@ Uso:
   queda en Descargas para que lo revises o reintentes a mano. Si algunos
   archivos sí se extrajeron pero otros no, la carpeta se organiza igual
   con lo que se pudo, y queda un `WARNING` explicando cuántos fallaron.
+- **Importante sobre carpetas vacías de ANTES de esta corrección**: si ya
+  tienes carpetas vacías de cuando el programa sí las creaba aunque la
+  extracción fallara, `procesos_juridicos.py` **no las va a arreglar
+  solo**, aunque subas `DIAS_ATRAS_PROCESAR_EXISTENTES` — el zip
+  correspondiente probablemente ya se movió a `Descargas\Procesados`
+  (porque el programa viejo lo marcaba como "hecho" sin comprobar), y la
+  vigilancia automática nunca mira dentro de esa subcarpeta a propósito
+  (para no reprocesar cosas ya hechas de verdad). Corre
+  `validar_renombrar_carpetas.py`, revisa `carpetas_vacias.csv` (columna
+  "Donde se encontró"): si dice `Descargas/Procesados`, tienes que sacar
+  ese zip de ahí a mano (muévelo de vuelta a Descargas) para que se
+  vuelva a intentar.
