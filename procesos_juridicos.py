@@ -304,7 +304,12 @@ def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
     contrasena, corrupto, o su ruta es demasiado larga para Windows, lo
     salta con una advertencia en el log y sigue con el resto, en vez de
     abortar la extraccion completa por un solo archivo problematico.
+    Devuelve (archivos_extraidos, archivos_fallidos) para que quien la
+    llame pueda darse cuenta si la extraccion realmente dejo algo o si
+    todo fallo (carpeta vacia disfrazada de "organizada").
     """
+    archivos_extraidos = 0
+    archivos_fallidos = 0
     destino_normalizado = os.path.normpath(os.path.abspath(destino_extraccion))
     with zipfile.ZipFile(ruta_zip, "r") as zf:
         for miembro in zf.infolist():
@@ -321,19 +326,25 @@ def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
                 os.makedirs(os.path.dirname(ruta_destino_segura), exist_ok=True)
                 with zf.open(miembro) as origen, open(ruta_destino_segura, "wb") as destino:
                     shutil.copyfileobj(origen, destino)
+                archivos_extraidos += 1
             except RuntimeError:
+                archivos_fallidos += 1
                 logging.warning(
                     "'%s' dentro de %s esta protegido con contrasena; se omite ese archivo.",
                     miembro.filename, os.path.basename(ruta_zip),
                 )
             except OSError as exc:
+                archivos_fallidos += 1
                 logging.warning(
                     "No se pudo extraer '%s' de %s (ruta probablemente muy larga para Windows): %s",
                     miembro.filename, os.path.basename(ruta_zip), exc,
                 )
 
+    return archivos_extraidos, archivos_fallidos
 
-def extraer_zip(ruta_zip: str, carpeta_temp: str) -> str:
+
+def extraer_zip(ruta_zip: str, carpeta_temp: str):
+    """Devuelve (carpeta_extraida, archivos_extraidos, archivos_fallidos)."""
     nombre_base = sanear_nombre(Path(ruta_zip).stem)
     destino_extraccion = os.path.join(carpeta_temp, nombre_base)
     contador = 1
@@ -341,9 +352,9 @@ def extraer_zip(ruta_zip: str, carpeta_temp: str) -> str:
         destino_extraccion = os.path.join(carpeta_temp, f"{nombre_base}_{contador}")
         contador += 1
 
-    _extraer_zip_tolerante(ruta_zip, destino_extraccion)
+    archivos_extraidos, archivos_fallidos = _extraer_zip_tolerante(ruta_zip, destino_extraccion)
 
-    return destino_extraccion
+    return destino_extraccion, archivos_extraidos, archivos_fallidos
 
 
 def texto_de_pdf(ruta_pdf: str) -> str:
@@ -402,10 +413,27 @@ def procesar_zip_manual(ruta_zip: str):
         return
 
     try:
-        carpeta_extraida = extraer_zip(ruta_zip, CARPETA_TEMP_MANUAL)
+        carpeta_extraida, archivos_extraidos, archivos_fallidos = extraer_zip(ruta_zip, CARPETA_TEMP_MANUAL)
     except zipfile.BadZipFile:
         logging.error("[Manual] %s no es un zip valido. Se omite.", nombre_zip)
         return
+
+    if archivos_extraidos == 0:
+        logging.error(
+            "[Manual] %s no dejo NINGUN archivo al extraerlo (revisa arriba en el log si salio 'protegido con "
+            "contrasena' o 'ruta muy larga' -- o si tu antivirus lo puso en cuarentena justo despues). El zip "
+            "NO se movio a Procesados para que puedas revisarlo/reintentarlo a mano.",
+            nombre_zip,
+        )
+        shutil.rmtree(carpeta_extraida, ignore_errors=True)
+        return
+
+    if archivos_fallidos:
+        logging.warning(
+            "[Manual] %s: se extrajeron %d archivo(s) pero %d fallaron (revisa las advertencias de arriba); "
+            "la carpeta se organiza igual con lo que si se pudo extraer.",
+            nombre_zip, archivos_extraidos, archivos_fallidos,
+        )
 
     radicado = buscar_radicado(carpeta_extraida)
     if radicado:
@@ -417,7 +445,7 @@ def procesar_zip_manual(ruta_zip: str):
 
     destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
     shutil.move(carpeta_extraida, destino_final)
-    logging.info("[Manual] Proceso organizado en: %s", destino_final)
+    logging.info("[Manual] Proceso organizado en: %s (%d archivo(s))", destino_final, archivos_extraidos)
 
     mover_zip_a_procesados(ruta_zip)
 
@@ -718,7 +746,19 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
 
     if len(contenidos) == 1 and contenidos[0].lower().endswith(".zip"):
         ruta_zip = os.path.join(carpeta_temp, contenidos[0])
-        _extraer_zip_tolerante(ruta_zip, destino_final)
+        archivos_extraidos, archivos_fallidos = _extraer_zip_tolerante(ruta_zip, destino_final)
+        if archivos_extraidos == 0:
+            shutil.rmtree(destino_final, ignore_errors=True)
+            raise RuntimeError(
+                f"El zip del expediente {expediente} no dejo NINGUN archivo al extraerlo (revisa arriba en el "
+                "log si salio 'protegido con contrasena', 'ruta muy larga', o si el antivirus lo puso en "
+                "cuarentena). No se marca este expediente como procesado, para que se reintente en la proxima vuelta."
+            )
+        if archivos_fallidos:
+            logging.warning(
+                "[SGDE] Expediente %s: se extrajeron %d archivo(s) pero %d fallaron (revisa las advertencias de arriba).",
+                expediente, archivos_extraidos, archivos_fallidos,
+            )
     else:
         shutil.move(carpeta_temp, destino_final)
 

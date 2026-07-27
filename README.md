@@ -310,3 +310,12 @@ Uso:
   radicado en el formato esperado, la carpeta se organiza igual usando
   el nombre del zip original, y queda registrado como advertencia en el
   log.
+- Si un zip no deja **ningún** archivo al extraerlo (por ejemplo porque
+  todo su contenido está protegido con contraseña, las rutas son
+  demasiado largas para Windows, o el antivirus puso los archivos en
+  cuarentena justo después de extraerlos), el programa avisa con un
+  `ERROR` bien visible en el log, **no** crea una carpeta vacía
+  disfrazada de "organizada", y **no** mueve el zip a `Procesados` — se
+  queda en Descargas para que lo revises o reintentes a mano. Si algunos
+  archivos sí se extrajeron pero otros no, la carpeta se organiza igual
+  con lo que se pudo, y queda un `WARNING` explicando cuántos fallaron.
