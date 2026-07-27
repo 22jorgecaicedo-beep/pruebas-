@@ -115,7 +115,7 @@ except ImportError:
 # ============================= CONFIGURACION =============================
 
 # Ruta al informe de Excel (.xlsx o .xlsm).
-RUTA_EXCEL = r"C:\Users\User\Desktop\3. CONTROL PROCESOS EJECUTIVOS ESSA 22072026 (5).xlsm"
+RUTA_EXCEL = r"C:\Users\User\Desktop\PARA REVISION.xlsm"
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
 HOJA_EXCEL = "ACTIVOS"
