@@ -86,9 +86,20 @@ seguridad.
 
 ## Uso
 
-Haz doble clic en `iniciar.bat`, o desde una terminal:
+Haz doble clic en `iniciar.bat`. Hace las dos cosas en orden, en la misma
+ventana:
+
+1. Corre `validar_renombrar_carpetas.py` una vez (revisa/renombra las
+   carpetas que ya existen en el disco contra el informe de Excel) y
+   muestra su reporte.
+2. Cuando termina, arranca `procesos_juridicos.py` y se queda vigilando
+   Descargas (y correo, si configuraste `credenciales_sgde.txt`) de forma
+   indefinida.
+
+O si prefieres correr cada uno por separado, desde una terminal:
 
 ```
+python validar_renombrar_carpetas.py
 python procesos_juridicos.py
 ```
 
