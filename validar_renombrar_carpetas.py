@@ -116,6 +116,7 @@ import logging
 import os
 import re
 import shutil
+import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -741,6 +742,29 @@ def buscar_zip_con_radicado(carpeta_descargas: Path, radicado: str):
     return None
 
 
+def extraer_zip_en_carpeta(ruta_zip: Path, carpeta_destino: Path):
+    """
+    Extrae 'ruta_zip' directo dentro de 'carpeta_destino' (una carpeta
+    VACIA que ya existe). Tolera archivos individuales corruptos dentro
+    del zip -- si uno falla, lo salta y sigue con el resto, en vez de
+    fallar por completo. NUNCA borra ni mueve el zip original: se puede
+    volver a intentar mas veces si hace falta. Devuelve
+    (archivos_extraidos, archivos_fallidos).
+    """
+    extraidos = 0
+    fallidos = 0
+    with zipfile.ZipFile(ruta_zip) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            try:
+                zf.extract(info, carpeta_destino)
+                extraidos += 1
+            except Exception:
+                fallidos += 1
+    return extraidos, fallidos
+
+
 def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, radicado_original: str, reporte: dict) -> bool:
     """
     Intenta renombrar 'carpeta' a 'numero. radicado_final', con las
@@ -1227,6 +1251,7 @@ def procesar():
     carpetas_sin_radicado = []  # nombres sin NINGUN radicado reconocible (ni exacto ni cercano)
     contenido_no_corresponde = []  # (nombre, radicado_esperado, radicado_dominante_en_contenido, veces)
     carpetas_rellenadas_desde_duplicados = []  # (nombre, nombre_donante, archivos_copiados)
+    carpetas_rellenadas_desde_zip = []  # (nombre, zip, ubicacion, archivos_extraidos, archivos_fallidos)
 
     carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
     for carpeta in carpetas_finales:
@@ -1272,7 +1297,39 @@ def procesar():
                     resultado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
                     if resultado:
                         zip_encontrado, zip_ubicacion = resultado
-                carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
+
+                if zip_encontrado:
+                    subcarpeta = "" if zip_ubicacion == "Descargas" else "Procesados"
+                    ruta_zip = carpeta_descargas / subcarpeta / zip_encontrado
+                    if MODO_PRUEBA:
+                        logging.info(
+                            "[SIMULACION-Vacia] '%s' esta vacia; se extraeria el zip pendiente '%s' (en "
+                            "%s) directo adentro.",
+                            carpeta.name, zip_encontrado, zip_ubicacion,
+                        )
+                    else:
+                        try:
+                            extraidos, fallidos = extraer_zip_en_carpeta(ruta_zip, carpeta)
+                        except Exception as error:
+                            extraidos, fallidos = 0, 0
+                            logging.error(
+                                "[Error] No se pudo extraer el zip pendiente '%s' (en %s) para '%s': %s",
+                                zip_encontrado, zip_ubicacion, carpeta.name, error,
+                            )
+                        numero_archivos = contar_archivos(carpeta)
+                        if numero_archivos > 0:
+                            logging.info(
+                                "[Vacia-Rellenada] '%s' estaba vacia; se extrajo el zip pendiente '%s' "
+                                "(en %s): %d archivo(s) recuperados%s. El zip original NO se borro.",
+                                carpeta.name, zip_encontrado, zip_ubicacion, extraidos,
+                                f" ({fallidos} no se pudieron extraer)" if fallidos else "",
+                            )
+                            carpetas_rellenadas_desde_zip.append(
+                                (carpeta.name, zip_encontrado, zip_ubicacion, extraidos, fallidos)
+                            )
+
+                if numero_archivos == 0:
+                    carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
         elif VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
             radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
             if radicados_hallados and radicado_exacto not in radicados_hallados:
@@ -1355,6 +1412,19 @@ def procesar():
             logging.info(
                 "   - '%s' se relleno con %d archivo(s) de '%s/%s'",
                 nombre, archivos, NOMBRE_CARPETA_DUPLICADOS, nombre_donante,
+            )
+
+    if carpetas_rellenadas_desde_zip:
+        logging.info(
+            "[Vacia-Rellenada] %d carpeta(s) estaban vacias y se rellenaron extrayendo un .zip pendiente "
+            "que ya estaba en Descargas. El zip original NO se borro:",
+            len(carpetas_rellenadas_desde_zip),
+        )
+        for nombre, zip_nombre, ubicacion, extraidos, fallidos in carpetas_rellenadas_desde_zip:
+            logging.info(
+                "   - '%s' se relleno extrayendo '%s' (en %s): %d archivo(s)%s",
+                nombre, zip_nombre, ubicacion, extraidos,
+                f", {fallidos} fallidos" if fallidos else "",
             )
 
     if carpetas_vacias:
@@ -1521,7 +1591,8 @@ def procesar():
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
-        "%d carpeta(s) vacia(s) (%d de ellas rellenadas desde Duplicados_para_revisar), "
+        "%d carpeta(s) vacia(s) (%d rellenadas desde Duplicados_para_revisar, %d rellenadas extrayendo "
+        "un zip pendiente), "
         "%d carpeta(s) sin nombre reconocible, "
         "%d carpeta(s) con contenido que no corresponde al nombre.",
         len(renombradas),
@@ -1532,6 +1603,7 @@ def procesar():
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
         len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_rellenadas_desde_duplicados),
+        len(carpetas_rellenadas_desde_zip),
         len(carpetas_sin_radicado),
         len(contenido_no_corresponde),
     )
