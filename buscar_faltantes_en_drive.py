@@ -339,7 +339,7 @@ def id_de_enlace_drive(url: str):
 
 
 def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
-                            descargas_a_validar: list) -> bool:
+                            descargas_a_validar: list, ya_descargados: set) -> bool:
     """
     Descarga (o simula) la carpeta de 'item' como 'numero. radicado' (o
     'numero. radicado_2', etc, si ya se descargo otro candidato para
@@ -347,8 +347,16 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
     como se encontro (ej. "radicado completo", "radicado corto: 2025-456",
     "cuenta: 1000111"). Si 'confiable' es False (coincidencia por
     radicado corto, cuenta, o enlace de correo sin radicado completo),
-    se agrega a 'descargas_a_validar' para el reporte aparte. Devuelve
-    True si quedo lista (o se simulo).
+    se agrega a 'descargas_a_validar' para el reporte aparte.
+
+    'ya_descargados' es un set con los ID de carpeta ya bajados para
+    ESTE MISMO proceso en esta misma corrida -- la busqueda por radicado
+    corto/cuenta/correo puede encontrar la MISMA carpeta de Drive varias
+    veces (ej. por dos formatos distintos del radicado corto, ya que la
+    busqueda de Drive es por texto aproximado, no exacta); si la carpeta
+    ya se descargo, se omite en vez de volver a bajar los mismos
+    archivos otra vez. Devuelve True si quedo lista (o se simulo, o ya
+    estaba descargada de una busqueda anterior).
     """
     carpeta = carpeta_contenedora(servicio, item)
     if not carpeta:
@@ -358,6 +366,14 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
             numero, radicado, item.get("name"),
         )
         return False
+
+    if carpeta["id"] in ya_descargados:
+        logging.info(
+            "   (la carpeta '%s' ya se habia descargado para el proceso %s por otra busqueda; se omite duplicado)",
+            carpeta["name"], numero,
+        )
+        return True
+    ya_descargados.add(carpeta["id"])
 
     nombre_destino = f"{numero}. {radicado}"
     destino = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), nombre_destino)
@@ -386,12 +402,17 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
 def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: list):
     numero, cuenta, radicado, juzgado = fila["numero"], fila["cuenta"], fila["radicado"], fila["juzgado"]
 
+    # Carpetas de Drive ya descargadas para ESTE proceso en esta corrida
+    # (para no bajar la misma carpeta dos veces si varias busquedas la
+    # encuentran -- ver descargar_coincidencia).
+    ya_descargados = set()
+
     if servicio and radicado:
         coincidencias = buscar_en_drive(servicio, radicado)
         carpetas = [c for c in coincidencias if c["mimeType"] == MIME_CARPETA]
         objetivo = carpetas[0] if carpetas else (coincidencias[0] if coincidencias else None)
         if objetivo and descargar_coincidencia(
-            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar
+            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, ya_descargados
         ):
             return
 
@@ -402,13 +423,13 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         for corto in radicados_cortos(radicado):
             for c in buscar_en_drive(servicio, corto):
                 descargar_coincidencia(
-                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar
+                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, ya_descargados
                 )
 
     if servicio and cuenta:
         for c in buscar_en_drive(servicio, cuenta):
             descargar_coincidencia(
-                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar
+                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
             )
 
     if credenciales_correo and BUSCAR_EN_CORREO:
@@ -434,7 +455,7 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                             continue
                         descargar_coincidencia(
                             servicio, item, numero, radicado, f"correo ({termino}): {asunto}", confiable,
-                            descargas_a_validar,
+                            descargas_a_validar, ya_descargados,
                         )
                 for nombre_zip, contenido in adjuntos:
                     _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar)
