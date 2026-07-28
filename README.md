@@ -408,12 +408,23 @@ confiables): Google Drive no busca por texto exacto, busca por
 *prefijo de palabra* (buscar `"2014-26"` también puede traer `"26
 julio"`) -- el script filtra esos falsos positivos solos antes de
 descargar nada. Además, antes de descargar cualquier candidato que solo
-coincidió por radicado corto o cuenta, confirma que la carpeta
-candidata (o alguno de sus archivos) de verdad mencione ESE radicado
--- así, si el mismo número de cuenta aparece en varios procesos
-distintos del mismo cliente a lo largo de los años, solo se descarga
-la carpeta que en realidad corresponde a este caso, no las de los
-demás.
+coincidió por radicado corto o cuenta, se verifican dos cosas:
+
+- Que la carpeta candidata (o alguno de sus archivos) de verdad
+  mencione ESE radicado -- así, si el mismo número de cuenta aparece en
+  varios procesos distintos del mismo cliente a lo largo de los años,
+  solo se descarga la carpeta que en realidad corresponde a este caso.
+- Que el demandante sea **ESSA/Electrificadora de Santander** -- se
+  revisa primero el nombre de la carpeta y de sus archivos; si ninguno
+  lo dice, se abre el contenido de hasta 5 PDF/DOCX como muestra. Así,
+  si la cuenta o el radicado corto coincide con un proceso de OTRO
+  cliente, esa carpeta no se descarga.
+
+Si un proceso ya tiene una carpeta en el disco (por ejemplo porque una
+corrida anterior ya lo descargó), el script lo omite por completo sin
+buscar ni descargar nada -- para no crear carpetas "_2" duplicadas si
+se vuelve a correr sobre un `procesos_faltantes_en_disco.csv`
+desactualizado.
 
 ## Si algo falla
 

@@ -15,12 +15,22 @@ Para cada proceso faltante, busca por, en este orden:
      y el consecutivo del radicado completo).
   3. El numero de CUENTA.
 Las busquedas 2 y 3 son menos confiables (un radicado corto o una cuenta
-se puede repetir o coincidir por casualidad con archivos de otro caso),
-pero TAMBIEN se descargan automatico (cada candidato en su propia
-carpeta, sin pisar nada). La diferencia es que quedan marcadas aparte,
-en faltantes_descargados_a_validar.csv, para que confirmes despues cual
-de esas descargas es la correcta y borres a mano las que no correspondan
+se puede repetir o coincidir por casualidad con archivos de otro caso).
+Para esos candidatos, antes de descargar se valida que la carpeta (o
+sus archivos) de verdad mencionen ese radicado, y que el demandante sea
+ESSA/Electrificadora de Santander (por nombre, o abriendo el contenido
+de sus PDF/DOCX si el nombre no lo dice) -- asi una cuenta compartida
+con procesos de OTRO cliente no trae la carpeta equivocada. Los que
+pasan esos filtros TAMBIEN se descargan automatico (cada candidato en
+su propia carpeta, sin pisar nada), pero quedan marcados aparte en
+faltantes_descargados_a_validar.csv, para que confirmes despues cual de
+esas descargas es la correcta y borres a mano las que no correspondan
 (el script nunca borra nada solo).
+
+Si un proceso YA tiene una carpeta en el disco (por ejemplo porque una
+corrida anterior ya lo descargo), se omite por completo sin buscar ni
+descargar nada -- para no crear carpetas "_2" duplicadas si se vuelve a
+correr el script sobre un procesos_faltantes_en_disco.csv desactualizado.
 
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
 busca la carpeta que lo contiene y descarga esa carpeta completa (no
@@ -45,6 +55,7 @@ encontraria/descargaria, sin bajar nada de verdad todavia.
 import csv
 import email
 import imaplib
+import io
 import logging
 import os
 import re
@@ -61,6 +72,19 @@ try:
 except ImportError:
     Credentials = None
     HttpError = Exception
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        PdfReader = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
 
 import procesos_juridicos as organizador
 import validar_renombrar_carpetas as cruce_excel
@@ -103,6 +127,19 @@ MIME_EXPORTAR = {
     "application/vnd.google-apps.spreadsheet": (".pdf", "application/pdf"),
     "application/vnd.google-apps.presentation": (".pdf", "application/pdf"),
 }
+
+# Textos que deben aparecer (en el nombre, o en el contenido de los
+# documentos) para confirmar que el demandante del proceso es ESSA --
+# se usa para descartar carpetas de OTROS procesos que comparten cuenta
+# o radicado corto por casualidad, pero son de un cliente distinto.
+TERMINOS_DEMANDANTE_VALIDO = ["essa", "electrificadora de santander"]
+
+# Cuantos archivos PDF/DOCX de una carpeta candidata se abren como
+# maximo para buscar el demandante en su CONTENIDO (si el nombre de la
+# carpeta/archivos no lo dice). Igual que MAX_ARCHIVOS_CONTENIDO_A_REVISAR
+# en validar_renombrar_carpetas.py, para no abrir carpetas enteras.
+MAX_ARCHIVOS_CONTENIDO_A_REVISAR = 5
+EXTENSIONES_CONTENIDO_DRIVE = {".pdf", ".docx"}
 
 # ===========================================================================
 
@@ -407,6 +444,94 @@ def _carpeta_corresponde_al_radicado(servicio, carpeta, radicado: str) -> bool:
     )
 
 
+def _texto_de_archivo_drive(servicio, archivo) -> str:
+    """Descarga (en memoria, sin guardar en disco) un PDF/DOCX de Drive y devuelve su texto, o "" si falla."""
+    nombre = archivo.get("name", "")
+    extension = Path(nombre).suffix.lower()
+    if extension not in EXTENSIONES_CONTENIDO_DRIVE:
+        return ""
+    try:
+        request = servicio.files().get_media(fileId=archivo["id"])
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        listo = False
+        while not listo:
+            _, listo = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception:
+        return ""
+    try:
+        if extension == ".pdf":
+            if PdfReader is None:
+                return ""
+            lector = PdfReader(buffer)
+            return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
+        if docx is None:
+            return ""
+        documento = docx.Document(buffer)
+        return "\n".join(p.text for p in documento.paragraphs)
+    except Exception:
+        return ""
+
+
+def _carpeta_tiene_demandante_valido(servicio, carpeta) -> bool:
+    """
+    Confirma que el demandante del proceso de 'carpeta' sea ESSA/
+    Electrificadora de Santander (ver TERMINOS_DEMANDANTE_VALIDO) --
+    revisa primero el nombre de la carpeta y de sus archivos de primer
+    nivel (rapido); si ninguno lo dice, abre el contenido de hasta
+    MAX_ARCHIVOS_CONTENIDO_A_REVISAR PDF/DOCX como muestra. Sin este
+    filtro, una cuenta/radicado corto compartido con procesos de OTRO
+    cliente traeria carpetas que no son de ESSA.
+    """
+    if any(_nombre_coincide(carpeta.get("name", ""), t) for t in TERMINOS_DEMANDANTE_VALIDO):
+        return True
+    try:
+        respuesta = servicio.files().list(
+            q=f"'{carpeta['id']}' in parents and trashed = false",
+            fields="files(id, name, mimeType)",
+        ).execute()
+    except HttpError:
+        return False
+    archivos = respuesta.get("files", [])
+    if any(
+        _nombre_coincide(archivo.get("name", ""), t)
+        for archivo in archivos
+        for t in TERMINOS_DEMANDANTE_VALIDO
+    ):
+        return True
+
+    candidatos_contenido = [
+        a for a in archivos
+        if Path(a.get("name", "")).suffix.lower() in EXTENSIONES_CONTENIDO_DRIVE
+    ]
+    for archivo in candidatos_contenido[:MAX_ARCHIVOS_CONTENIDO_A_REVISAR]:
+        texto = _texto_de_archivo_drive(servicio, archivo)
+        if any(_nombre_coincide(texto, t) for t in TERMINOS_DEMANDANTE_VALIDO):
+            return True
+    return False
+
+
+def _radicado_ya_en_disco(radicado: str) -> bool:
+    """
+    True si ya existe una carpeta en CARPETA_PROCESOS para este radicado
+    -- se revisa ANTES de buscar/descargar nada, para no crear una
+    carpeta "_2" duplicada si el script se corre de nuevo sobre un
+    procesos_faltantes_en_disco.csv que ya quedo desactualizado (porque
+    una corrida anterior ya trajo ese proceso).
+    """
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return False
+    try:
+        for hijo in carpeta_procesos.iterdir():
+            if hijo.is_dir() and cruce_excel.radicado_de_nombre_carpeta(hijo.name) == radicado:
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
                             descargas_a_validar: list, ya_descargados: set) -> bool:
     """
@@ -440,6 +565,14 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
         logging.info(
             "   (se omite '%s': coincide por %s, pero ni ella ni sus archivos mencionan el radicado %s -- "
             "probablemente es de OTRO proceso que comparte la misma cuenta/año)",
+            carpeta["name"], motivo, radicado,
+        )
+        return False
+
+    if not confiable and not _carpeta_tiene_demandante_valido(servicio, carpeta):
+        logging.info(
+            "   (se omite '%s': coincide por %s y menciona el radicado %s, pero no se encontro a ESSA/"
+            "Electrificadora de Santander como demandante -- probablemente es de otro proceso del mismo cliente)",
             carpeta["name"], motivo, radicado,
         )
         return False
@@ -478,6 +611,14 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
 
 def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: list):
     numero, cuenta, radicado, juzgado = fila["numero"], fila["cuenta"], fila["radicado"], fila["juzgado"]
+
+    if radicado and _radicado_ya_en_disco(radicado):
+        logging.info(
+            "[Ya en disco] Proceso %s (radicado %s): ya existe una carpeta para este radicado en %s -- se omite "
+            "(seguramente ya se habia descargado en una corrida anterior).",
+            numero, radicado, CARPETA_PROCESOS,
+        )
+        return
 
     # Carpetas de Drive ya descargadas para ESTE proceso en esta corrida
     # (para no bajar la misma carpeta dos veces si varias busquedas la
