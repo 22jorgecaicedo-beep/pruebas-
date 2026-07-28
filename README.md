@@ -407,11 +407,13 @@ Notas sobre las búsquedas por radicado corto/cuenta (las menos
 confiables): Google Drive no busca por texto exacto, busca por
 *prefijo de palabra* (buscar `"2014-26"` también puede traer `"26
 julio"`) -- el script filtra esos falsos positivos solos antes de
-descargar nada. Además, si una sola búsqueda trae más de
-`MAX_CANDIDATOS_POR_BUSQUEDA` (5 por defecto) resultados -- típico de
-un número de cuenta que se repite en documentos de muchos procesos
-distintos a lo largo de los años -- el script no descarga ninguno,
-solo avisa la cantidad para que la revises a mano.
+descargar nada. Además, antes de descargar cualquier candidato que solo
+coincidió por radicado corto o cuenta, confirma que la carpeta
+candidata (o alguno de sus archivos) de verdad mencione ESE radicado
+-- así, si el mismo número de cuenta aparece en varios procesos
+distintos del mismo cliente a lo largo de los años, solo se descarga
+la carpeta que en realidad corresponde a este caso, no las de los
+demás.
 
 ## Si algo falla
 

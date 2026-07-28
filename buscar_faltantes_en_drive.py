@@ -97,14 +97,6 @@ ARCHIVO_REPORTE_A_VALIDAR = os.path.join(os.path.dirname(__file__), "faltantes_d
 # (radicado completo).
 MODO_PRUEBA = True
 
-# Si una busqueda por radicado corto o cuenta (las menos confiables)
-# trae MAS candidatos que este numero, se considera demasiado ruidosa
-# para descargar automatico (tipico de un numero de cuenta que se
-# repite en documentos de muchos procesos distintos a lo largo de los
-# años) -- en vez de descargar todos, se omiten y solo se avisa la
-# cantidad encontrada, para que la revises a mano si quieres.
-MAX_CANDIDATOS_POR_BUSQUEDA = 5
-
 MIME_CARPETA = "application/vnd.google-apps.folder"
 MIME_EXPORTAR = {
     "application/vnd.google-apps.document": (".pdf", "application/pdf"),
@@ -388,24 +380,31 @@ def id_de_enlace_drive(url: str):
 # ==================== Logica principal ====================
 
 
-def _demasiados_candidatos(coincidencias: list, numero: str, radicado: str, motivo: str) -> bool:
+def _carpeta_corresponde_al_radicado(servicio, carpeta, radicado: str) -> bool:
     """
-    Si 'coincidencias' trae mas de MAX_CANDIDATOS_POR_BUSQUEDA resultados,
-    la busqueda (radicado corto o cuenta) es demasiado generica para
-    confiar en descargar todos los candidatos -- tipico de una cuenta
-    que se repite en documentos de muchos procesos distintos a lo largo
-    de los años. En ese caso no se descarga NADA de esta busqueda, solo
-    se avisa la cantidad para que se revise a mano. Devuelve True si se
-    debe omitir (demasiados candidatos).
+    Confirma que 'carpeta' de verdad tenga que ver con ESTE radicado (no
+    solo con la cuenta o el radicado corto que trajo la busqueda) --
+    revisa si el radicado (completo, o alguno de sus formatos cortos)
+    aparece en el NOMBRE de la carpeta, o en el nombre de alguno de sus
+    archivos/subcarpetas de primer nivel. Sin esto, una cuenta que se
+    repite en documentos de procesos DISTINTOS (misma cliente, casos
+    diferentes a lo largo de los años) traeria la carpeta equivocada.
     """
-    if len(coincidencias) <= MAX_CANDIDATOS_POR_BUSQUEDA:
+    terminos = [radicado] + radicados_cortos(radicado)
+    if any(_nombre_coincide(carpeta.get("name", ""), t) for t in terminos):
+        return True
+    try:
+        respuesta = servicio.files().list(
+            q=f"'{carpeta['id']}' in parents and trashed = false",
+            fields="files(name)",
+        ).execute()
+    except HttpError:
         return False
-    logging.warning(
-        "[Revisar] Proceso %s (radicado %s, %s): %d candidatos encontrados -- demasiados para descargar "
-        "automatico (mas de %d), se omiten todos. Busca a mano en Drive con este termino si quieres revisarlos.",
-        numero, radicado, motivo, len(coincidencias), MAX_CANDIDATOS_POR_BUSQUEDA,
+    return any(
+        _nombre_coincide(archivo.get("name", ""), t)
+        for archivo in respuesta.get("files", [])
+        for t in terminos
     )
-    return True
 
 
 def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
@@ -434,6 +433,14 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
             "[Sin coincidencia] Proceso %s (radicado %s): se encontro '%s' pero no se pudo determinar su "
             "carpeta contenedora en Drive.",
             numero, radicado, item.get("name"),
+        )
+        return False
+
+    if not confiable and not _carpeta_corresponde_al_radicado(servicio, carpeta, radicado):
+        logging.info(
+            "   (se omite '%s': coincide por %s, pero ni ella ni sus archivos mencionan el radicado %s -- "
+            "probablemente es de OTRO proceso que comparte la misma cuenta/año)",
+            carpeta["name"], motivo, radicado,
         )
         return False
 
@@ -486,28 +493,25 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         ):
             return
 
-    # No hubo coincidencia exacta: se descargan TODOS los candidatos que
+    # No hubo coincidencia exacta: se descargan los candidatos que
     # aparezcan por radicado corto o cuenta (cada uno en su propia
-    # carpeta, sin pisar nada), pero marcados para validar despues --
-    # salvo que la busqueda traiga demasiados candidatos (ver
-    # _demasiados_candidatos), en cuyo caso se omite por completo.
+    # carpeta, sin pisar nada), pero marcados para validar despues.
+    # descargar_coincidencia ya verifica que la carpeta candidata
+    # realmente mencione este radicado (ver _carpeta_corresponde_al_radicado)
+    # antes de bajar nada -- asi una cuenta compartida entre varios
+    # procesos no trae la carpeta de OTRO caso.
     if servicio:
         for corto in radicados_cortos(radicado):
-            coincidencias = buscar_en_drive(servicio, corto)
-            if _demasiados_candidatos(coincidencias, numero, radicado, f"radicado corto: {corto}"):
-                continue
-            for c in coincidencias:
+            for c in buscar_en_drive(servicio, corto):
                 descargar_coincidencia(
                     servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, ya_descargados
                 )
 
     if servicio and cuenta:
-        coincidencias = buscar_en_drive(servicio, cuenta)
-        if not _demasiados_candidatos(coincidencias, numero, radicado, f"cuenta: {cuenta}"):
-            for c in coincidencias:
-                descargar_coincidencia(
-                    servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
-                )
+        for c in buscar_en_drive(servicio, cuenta):
+            descargar_coincidencia(
+                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
+            )
 
     if credenciales_correo and BUSCAR_EN_CORREO:
         usuario, app_password = credenciales_correo
