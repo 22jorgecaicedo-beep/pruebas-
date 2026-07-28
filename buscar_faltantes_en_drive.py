@@ -532,25 +532,50 @@ def _radicado_ya_en_disco(radicado: str) -> bool:
     return False
 
 
-def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
-                            descargas_a_validar: list, ya_descargados: set) -> bool:
+def _destino_compartido(numero: str, radicado: str, contexto: dict):
     """
-    Descarga (o simula) la carpeta de 'item' como 'numero. radicado' (o
-    'numero. radicado_2', etc, si ya se descargo otro candidato para
-    este mismo proceso) dentro de CARPETA_PROCESOS. 'motivo' describe
-    como se encontro (ej. "radicado completo", "radicado corto: 2025-456",
-    "cuenta: 1000111"). Si 'confiable' es False (coincidencia por
-    radicado corto, cuenta, o enlace de correo sin radicado completo),
-    se agrega a 'descargas_a_validar' para el reporte aparte.
+    Devuelve la carpeta de destino asignada a ESTE proceso en esta
+    corrida (la crea la primera vez que se llama, y las llamadas
+    siguientes reciben la MISMA ruta) -- y si dice si esta es la
+    PRIMERA vez que se asigna (True) o si ya existia de un candidato
+    anterior (False, hay que fusionar en vez de crear una carpeta
+    nueva). Devuelve (destino, es_el_primero).
+    """
+    si_es_el_primero = contexto["destino"] is None
+    if si_es_el_primero:
+        contexto["destino"] = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), f"{numero}. {radicado}")
+    return contexto["destino"], si_es_el_primero
 
-    'ya_descargados' es un set con los ID de carpeta ya bajados para
-    ESTE MISMO proceso en esta misma corrida -- la busqueda por radicado
-    corto/cuenta/correo puede encontrar la MISMA carpeta de Drive varias
-    veces (ej. por dos formatos distintos del radicado corto, ya que la
-    busqueda de Drive es por texto aproximado, no exacta); si la carpeta
-    ya se descargo, se omite en vez de volver a bajar los mismos
-    archivos otra vez. Devuelve True si quedo lista (o se simulo, o ya
-    estaba descargada de una busqueda anterior).
+
+def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
+                            descargas_a_validar: list, contexto: dict) -> bool:
+    """
+    Descarga (o simula) la carpeta de 'item' dentro de CARPETA_PROCESOS,
+    como 'numero. radicado'. 'motivo' describe como se encontro (ej.
+    "radicado completo", "radicado corto: 2025-456", "cuenta: 1000111").
+    Si 'confiable' es False (coincidencia por radicado corto, cuenta, o
+    enlace de correo sin radicado completo), se agrega a
+    'descargas_a_validar' para el reporte aparte.
+
+    'contexto' es un dict COMPARTIDO por todos los candidatos de ESTE
+    MISMO proceso en esta corrida (ver procesar_faltante), con:
+      - "ya_descargados": set de ID de carpeta de Drive ya bajados --
+        la busqueda por radicado corto/cuenta/correo puede encontrar la
+        MISMA carpeta de Drive varias veces (ej. por dos formatos
+        distintos del radicado corto); si ya se descargo, se omite en
+        vez de volver a bajar los mismos archivos otra vez.
+      - "destino": la carpeta de destino ya asignada en el disco para
+        este proceso (None hasta el primer candidato). Si un SEGUNDO
+        candidato (otra carpeta de Drive distinta, que tambien paso las
+        validaciones de radicado y demandante) aparece para el mismo
+        proceso, su contenido se FUSIONA dentro de esa misma carpeta en
+        vez de crear "_2", "_3", etc -- asi, si el expediente esta
+        repartido en varias carpetas de Drive (ej. una con el "poder" y
+        otra con el "expediente"), todo termina junto en UNA sola
+        carpeta en el disco.
+
+    Devuelve True si quedo lista (o se simulo, o ya estaba descargada de
+    una busqueda anterior).
     """
     carpeta = carpeta_contenedora(servicio, item)
     if not carpeta:
@@ -577,32 +602,40 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
         )
         return False
 
-    if carpeta["id"] in ya_descargados:
+    if carpeta["id"] in contexto["ya_descargados"]:
         logging.info(
             "   (la carpeta '%s' ya se habia descargado para el proceso %s por otra busqueda; se omite duplicado)",
             carpeta["name"], numero,
         )
         return True
-    ya_descargados.add(carpeta["id"])
+    contexto["ya_descargados"].add(carpeta["id"])
 
-    nombre_destino = f"{numero}. {radicado}"
-    destino = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), nombre_destino)
+    destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
     if MODO_PRUEBA:
+        verbo = "se descargaria" if es_el_primero else "se fusionaria (junto con lo ya encontrado)"
         logging.info(
-            "[SIMULACION%s] Proceso %s (radicado %s, %s): se descargaria la carpeta de Drive '%s' (%s) como '%s'.",
-            etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name,
+            "[SIMULACION%s] Proceso %s (radicado %s, %s): %s la carpeta de Drive '%s' (%s) en '%s'.",
+            etiqueta, numero, radicado, motivo, verbo, carpeta["name"], enlace_de(carpeta), destino.name,
         )
         if not confiable:
             descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
         return True
 
-    archivos = descargar_carpeta_drive(servicio, carpeta["id"], destino)
-    cruce_excel.aplanar_carpeta_anidada_unica(destino)
+    if es_el_primero:
+        archivos = descargar_carpeta_drive(servicio, carpeta["id"], destino)
+        cruce_excel.aplanar_carpeta_anidada_unica(destino)
+        accion = "Descargado"
+    else:
+        temporal = destino.parent / f"_tmp_fusion_{carpeta['id']}"
+        archivos = descargar_carpeta_drive(servicio, carpeta["id"], temporal)
+        cruce_excel.aplanar_carpeta_anidada_unica(temporal)
+        organizador.fusionar_carpeta_en_destino(temporal, destino)
+        accion = "Fusionado"
     logging.info(
-        "[Descargado%s] Proceso %s (radicado %s, %s): '%s' (%s) -> '%s' (%d archivo(s)).",
-        etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name, archivos,
+        "[%s%s] Proceso %s (radicado %s, %s): '%s' (%s) -> '%s' (%d archivo(s)).",
+        accion, etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name, archivos,
     )
     if not confiable:
         descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
@@ -620,38 +653,42 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         )
         return
 
-    # Carpetas de Drive ya descargadas para ESTE proceso en esta corrida
-    # (para no bajar la misma carpeta dos veces si varias busquedas la
-    # encuentran -- ver descargar_coincidencia).
-    ya_descargados = set()
+    # Contexto compartido para ESTE proceso en esta corrida (ver
+    # descargar_coincidencia): dedup de carpetas de Drive ya bajadas, y
+    # la carpeta de destino ya asignada en el disco (para fusionar ahi
+    # los candidatos siguientes en vez de crear "_2", "_3", etc).
+    contexto = {"ya_descargados": set(), "destino": None}
 
     if servicio and radicado:
         coincidencias = buscar_en_drive(servicio, radicado)
         carpetas = [c for c in coincidencias if c["mimeType"] == MIME_CARPETA]
         objetivo = carpetas[0] if carpetas else (coincidencias[0] if coincidencias else None)
         if objetivo and descargar_coincidencia(
-            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, ya_descargados
+            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, contexto
         ):
             return
 
     # No hubo coincidencia exacta: se descargan los candidatos que
-    # aparezcan por radicado corto o cuenta (cada uno en su propia
-    # carpeta, sin pisar nada), pero marcados para validar despues.
-    # descargar_coincidencia ya verifica que la carpeta candidata
-    # realmente mencione este radicado (ver _carpeta_corresponde_al_radicado)
-    # antes de bajar nada -- asi una cuenta compartida entre varios
-    # procesos no trae la carpeta de OTRO caso.
+    # aparezcan por radicado corto o cuenta -- todos dentro de la MISMA
+    # carpeta de destino (el primero la crea, los siguientes se
+    # fusionan ahi, ver descargar_coincidencia), marcados para validar
+    # despues. descargar_coincidencia ya verifica que la carpeta
+    # candidata realmente mencione este radicado (ver
+    # _carpeta_corresponde_al_radicado) y que el demandante sea ESSA
+    # (ver _carpeta_tiene_demandante_valido) antes de bajar nada -- asi
+    # una cuenta compartida entre varios procesos (o con otro cliente)
+    # no trae la carpeta de OTRO caso.
     if servicio:
         for corto in radicados_cortos(radicado):
             for c in buscar_en_drive(servicio, corto):
                 descargar_coincidencia(
-                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, ya_descargados
+                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, contexto
                 )
 
     if servicio and cuenta:
         for c in buscar_en_drive(servicio, cuenta):
             descargar_coincidencia(
-                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
+                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, contexto
             )
 
     if credenciales_correo and BUSCAR_EN_CORREO:
@@ -677,36 +714,44 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                             continue
                         descargar_coincidencia(
                             servicio, item, numero, radicado, f"correo ({termino}): {asunto}", confiable,
-                            descargas_a_validar, ya_descargados,
+                            descargas_a_validar, contexto,
                         )
                 for nombre_zip, contenido in adjuntos:
-                    _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar)
+                    _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar, contexto)
 
 
 def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
-                            descargas_a_validar: list):
-    nombre_destino = f"{numero}. {radicado}"
-    destino = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), nombre_destino)
+                            descargas_a_validar: list, contexto: dict):
+    destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
     motivo = "radicado completo" if confiable else f"correo ({termino}): {asunto}"
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
     if MODO_PRUEBA:
+        verbo = "se extraeria" if es_el_primero else "se fusionaria (junto con lo ya encontrado)"
         logging.info(
-            "[SIMULACION%s] Proceso %s (radicado %s, %s): se extraeria el adjunto '%s' del correo '%s' como '%s'.",
-            etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name,
+            "[SIMULACION%s] Proceso %s (radicado %s, %s): %s el adjunto '%s' del correo '%s' en '%s'.",
+            etiqueta, numero, radicado, motivo, verbo, nombre_zip, asunto, destino.name,
         )
         if not confiable:
             descargas_a_validar.append((numero, radicado, motivo, nombre_zip, "(adjunto de correo)", destino.name))
         return
 
-    destino.mkdir(parents=True, exist_ok=True)
-    ruta_zip_temp = destino.parent / f"_tmp_{nombre_zip}"
+    ruta_zip_temp = Path(CARPETA_PROCESOS) / f"_tmp_{nombre_zip}"
     ruta_zip_temp.write_bytes(contenido)
     try:
-        extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, destino)
+        if es_el_primero:
+            destino.mkdir(parents=True, exist_ok=True)
+            extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, destino)
+            accion = "Descargado"
+        else:
+            temporal = destino.parent / f"_tmp_extraccion_{Path(nombre_zip).stem}"
+            temporal.mkdir(parents=True, exist_ok=True)
+            extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, temporal)
+            organizador.fusionar_carpeta_en_destino(temporal, destino)
+            accion = "Fusionado"
         logging.info(
-            "[Descargado%s] Proceso %s (radicado %s, %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
-            etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name, extraidos,
+            "[%s%s] Proceso %s (radicado %s, %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
+            accion, etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name, extraidos,
             f", {fallidos} fallidos" if fallidos else "",
         )
         if not confiable:

@@ -358,13 +358,21 @@ por este orden:
 
 Los casos 2 y 3 son menos confiables (un radicado corto o una cuenta
 puede coincidir por casualidad con archivos de otro proceso), pero
-**también se descargan automático** -- cada candidato en su propia
-carpeta, sin pisar nada. La diferencia es que quedan marcados aparte en
-`faltantes_descargados_a_validar.csv`, para que después confirmes cuál
-descarga es la correcta y borres a mano las que no correspondan (el
-script nunca borra nada por su cuenta). Si lo que encuentra es un
-archivo suelto (no una carpeta), busca la carpeta que lo contiene y
-descarga esa carpeta completa.
+**también se descargan automático**. Si para el mismo proceso aparece
+MÁS de un candidato válido (ej. el expediente está repartido en varias
+carpetas de Drive -- una con el "poder", otra con el "expediente"),
+todos quedan **fusionados dentro de UNA sola carpeta** en el disco (no
+se crean "_2", "_3", etc): el primer candidato crea la carpeta, y cada
+candidato siguiente que también pase las validaciones se copia dentro
+de esa misma carpeta (si hay un archivo con el mismo nombre, se
+reemplaza por el más reciente; nunca se borra nada que ya estuviera).
+La diferencia con el caso 1 es que estos quedan marcados aparte en
+`faltantes_descargados_a_validar.csv` (una fila por cada candidato que
+se fusionó), para que después confirmes que todo corresponde al mismo
+proceso y borres a mano lo que no corresponda (el script nunca borra
+nada por su cuenta). Si lo que encuentra es un archivo suelto (no una
+carpeta), busca la carpeta que lo contiene y descarga esa carpeta
+completa.
 
 ### Configurar el acceso a Google Drive (una sola vez)
 
