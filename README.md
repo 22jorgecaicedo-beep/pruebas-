@@ -398,6 +398,19 @@ más ahí adentro -- **no** descarga la carpeta completa (traería folios
 de otros procesos sin relación); solo baja los archivos de esa carpeta
 que de verdad mencionen el radicado (y, si aplica, al demandante ESSA).
 
+**Orden cronológico automático:** al terminar de descargar/fusionar
+cada proceso, sus documentos quedan ordenados por FECHA y numerados
+`1. `, `2. `, etc (el más viejo primero). La fecha se busca primero en
+el NOMBRE del archivo, y si no la trae, se abre su contenido (PDF/DOCX)
+para buscarla ahí; los documentos sin ninguna fecha reconocible quedan
+al final, en el orden en que ya estaban. Si el proceso está repartido
+en subcarpetas (ej. "principal" y "anexos"), cada una se ordena por su
+cuenta, sin mezclar los documentos de una con los de otra. Si vuelves a
+correr el script y llega un documento más viejo que los demás, el
+orden se recalcula solo. Solo se ordenan las carpetas que se acaban de
+descargar/fusionar en esa corrida -- no toca carpetas que ya estaban
+en el disco de antes.
+
 **Si un archivo puntual falla al descargarlo** (ruta demasiado larga
 para Windows, permisos, antivirus, un corte de red momentáneo), el
 script lo salta con una advertencia en el log y sigue con el resto --

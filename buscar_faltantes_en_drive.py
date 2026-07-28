@@ -59,6 +59,13 @@ completa (traeria folios de otros procesos sin relacion), sino
 UNICAMENTE los archivos de esa carpeta que de verdad mencionen este
 radicado (y, si aplica, al demandante ESSA).
 
+Al terminar de descargar/fusionar cada proceso, ordena sus documentos
+CRONOLOGICAMENTE y les antepone un numero de orden: "1. ", "2. ", etc
+(el mas viejo primero; los que no tengan una fecha reconocible en su
+nombre o contenido quedan al final). Ver ordenar_y_enumerar_carpeta().
+Solo se ordenan las carpetas que se acaban de tocar en ESTA corrida --
+las que ya estaban en el disco de antes no se tocan.
+
 Requiere:
   - credenciales_drive.json: credenciales de OAuth de Google Drive (ver
     README para los pasos de como generarlas en Google Cloud Console).
@@ -76,6 +83,7 @@ encontraria/descargaria, sin bajar nada de verdad todavia.
 """
 
 import csv
+import datetime
 import email
 import imaplib
 import io
@@ -83,6 +91,7 @@ import logging
 import os
 import re
 import shutil
+import uuid
 import zipfile
 from email.header import decode_header
 from pathlib import Path
@@ -769,6 +778,180 @@ def consolidar_duplicados_en_disco():
         )
 
 
+# ==================== Orden cronologico de documentos ====================
+
+_MESES = {
+    "enero": 1, "ene": 1, "jan": 1, "january": 1,
+    "febrero": 2, "feb": 2, "february": 2,
+    "marzo": 3, "mar": 3, "march": 3,
+    "abril": 4, "abr": 4, "apr": 4, "april": 4,
+    "mayo": 5, "may": 5,
+    "junio": 6, "jun": 6, "june": 6,
+    "julio": 7, "jul": 7, "july": 7,
+    "agosto": 8, "ago": 8, "aug": 8, "august": 8,
+    "septiembre": 9, "setiembre": 9, "sep": 9, "sept": 9, "september": 9,
+    "octubre": 10, "oct": 10, "october": 10,
+    "noviembre": 11, "nov": 11, "november": 11,
+    "diciembre": 12, "dic": 12, "dec": 12, "december": 12,
+}
+
+# Distintos formatos de fecha que aparecen en la vida real en los
+# nombres de archivo de Drive y en el contenido de los documentos.
+# Todos exigen el AÑO completo (4 digitos) -- una fecha sin año (ej.
+# "24 ENERO") es ambigua entre distintos años y no sirve para ordenar.
+_PATRON_FECHA_ISO = re.compile(r"(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)")
+_PATRON_FECHA_DMY = re.compile(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?!\d)")
+_PATRON_FECHA_DIA_DE_MES_DE_ANIO = re.compile(
+    r"(?<!\w)(\d{1,2})\s+de\s+([a-zA-Záéíóúñ]+)\s+de\s+(\d{4})(?!\d)", re.IGNORECASE
+)
+_PATRON_FECHA_MES_DIA_ANIO = re.compile(
+    r"(?<!\w)([a-zA-Záéíóúñ]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})(?!\d)", re.IGNORECASE
+)
+
+
+def _fecha_valida(anio: int, mes: int, dia: int):
+    try:
+        return datetime.date(anio, mes, dia)
+    except ValueError:
+        return None
+
+
+def _fecha_en_texto(texto: str):
+    """
+    Busca la PRIMERA fecha reconocible en 'texto' (nombre de archivo, o
+    contenido de un documento), probando varios formatos comunes:
+    ISO (2023-07-24), DD/MM/AAAA, "24 de julio de 2023", "Jul 24 2023".
+    Devuelve un datetime.date, o None si no encuentra ninguna.
+    """
+    if not texto:
+        return None
+
+    m = _PATRON_FECHA_ISO.search(texto)
+    if m:
+        fecha = _fecha_valida(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        if fecha:
+            return fecha
+
+    m = _PATRON_FECHA_DMY.search(texto)
+    if m:
+        fecha = _fecha_valida(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        if fecha:
+            return fecha
+
+    m = _PATRON_FECHA_DIA_DE_MES_DE_ANIO.search(texto)
+    if m:
+        mes = _MESES.get(m.group(2).lower())
+        if mes:
+            fecha = _fecha_valida(int(m.group(3)), mes, int(m.group(1)))
+            if fecha:
+                return fecha
+
+    m = _PATRON_FECHA_MES_DIA_ANIO.search(texto)
+    if m:
+        mes = _MESES.get(m.group(1).lower())
+        if mes:
+            fecha = _fecha_valida(int(m.group(3)), mes, int(m.group(2)))
+            if fecha:
+                return fecha
+
+    return None
+
+
+_PATRON_PREFIJO_ORDEN = re.compile(r"^\d+\.\s+")
+
+
+def _quitar_prefijo_orden(nombre: str) -> str:
+    """Quita un prefijo "N. " que le haya puesto una corrida ANTERIOR de ordenar_y_enumerar_carpeta(), para recalcular el orden desde cero."""
+    return _PATRON_PREFIJO_ORDEN.sub("", nombre, count=1)
+
+
+def _fecha_de_archivo(ruta: Path):
+    """
+    Fecha de 'ruta' para ordenarla cronologicamente: primero se busca
+    en su NOMBRE (sin el prefijo de orden de una corrida anterior, si
+    lo tenia); si no hay ninguna ahi, se abre su contenido (solo PDF/DOCX)
+    y se busca en el texto. Devuelve un datetime.date, o None si no se
+    encontro ninguna fecha en ningun lado.
+    """
+    fecha = _fecha_en_texto(_quitar_prefijo_orden(ruta.name))
+    if fecha:
+        return fecha
+    if ruta.suffix.lower() == ".pdf":
+        texto = cruce_excel._texto_de_pdf(ruta)
+    elif ruta.suffix.lower() == ".docx":
+        texto = cruce_excel._texto_de_docx(ruta)
+    else:
+        return None
+    return _fecha_en_texto(texto)
+
+
+def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
+    """
+    Dentro de 'carpeta' (y cada una de sus subcarpetas, cada una por su
+    cuenta -- nunca se mueven archivos de una subcarpeta a otra), ordena
+    los archivos por FECHA (ver _fecha_de_archivo: primero el nombre, y
+    si no hay se abre el contenido) de mas viejo a mas nuevo, y les
+    antepone un numero de orden: "1. ", "2. ", etc. Los archivos sin
+    fecha reconocible en ningun lado quedan al final, en el orden en
+    que ya estaban.
+
+    Si se corre varias veces sobre la misma carpeta, primero quita
+    cualquier prefijo de orden que le haya puesto una corrida anterior
+    y recalcula todo desde cero -- asi, si despues llega un documento
+    mas viejo que los demas (ej. por una fusion posterior), el orden se
+    corrige solo.
+
+    Nunca borra nada; si el nombre final de un archivo coincidiera con
+    el de otro, se le agrega un sufijo libre en vez de pisarlo. Devuelve
+    cuantos archivos se renombraron en total (contando subcarpetas).
+    """
+    try:
+        hijos = list(carpeta.iterdir())
+    except OSError:
+        return 0
+
+    subcarpetas = [h for h in hijos if h.is_dir()]
+    archivos = [
+        h for h in hijos
+        if h.is_file() and h.name.lower() not in cruce_excel.ARCHIVOS_A_IGNORAR_AL_CONTAR
+    ]
+
+    con_fecha = []
+    sin_fecha = []
+    for archivo in archivos:
+        fecha = _fecha_de_archivo(archivo)
+        (con_fecha if fecha else sin_fecha).append((fecha, archivo))
+    con_fecha.sort(key=lambda par: par[0])
+    orden_final = [archivo for _fecha, archivo in con_fecha] + [archivo for _fecha, archivo in sin_fecha]
+
+    nombres_finales = [
+        f"{indice}. {_quitar_prefijo_orden(archivo.name)}"
+        for indice, archivo in enumerate(orden_final, start=1)
+    ]
+
+    renombrados = 0
+    if any(archivo.name != nombre for archivo, nombre in zip(orden_final, nombres_finales)):
+        # Se renombra primero a nombres TEMPORALES unicos, y de ahi a los
+        # finales -- para que el nombre final de un archivo nunca choque
+        # con el nombre ORIGINAL (todavia sin renombrar) de otro.
+        temporales = [
+            archivo.rename(archivo.with_name(f"__orden_tmp_{uuid.uuid4().hex}{archivo.suffix}"))
+            for archivo in orden_final
+        ]
+        for archivo_original, temporal, nombre_final in zip(orden_final, temporales, nombres_finales):
+            if archivo_original.name != nombre_final:
+                renombrados += 1
+            destino = temporal.with_name(nombre_final)
+            if destino.exists():
+                destino = _ruta_archivo_libre(temporal.parent, nombre_final)
+            temporal.rename(destino)
+
+    for subcarpeta in subcarpetas:
+        renombrados += ordenar_y_enumerar_carpeta(subcarpeta)
+
+    return renombrados
+
+
 def _radicado_ya_en_disco(radicado: str) -> bool:
     """
     True si ya existe una carpeta en CARPETA_PROCESOS para este radicado
@@ -1021,6 +1204,27 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
     return True
 
 
+def _finalizar_orden(numero: str, contexto: dict):
+    """
+    Al terminar de procesar un proceso, si de verdad se descargo algo
+    en esta corrida (contexto["destino"] esta asignado y no estamos en
+    MODO_PRUEBA), ordena cronologicamente y enumera sus documentos --
+    ver ordenar_y_enumerar_carpeta().
+    """
+    if MODO_PRUEBA or contexto["destino"] is None:
+        return
+    try:
+        renombrados = ordenar_y_enumerar_carpeta(contexto["destino"])
+        if renombrados:
+            logging.info(
+                "[Orden] Proceso %s: %d documento(s) de '%s' se ordenaron cronologicamente y se enumeraron "
+                "(1., 2., ...).",
+                numero, renombrados, contexto["destino"].name,
+            )
+    except OSError as error:
+        logging.warning("[Orden] Proceso %s: no se pudo ordenar '%s': %s", numero, contexto["destino"].name, error)
+
+
 def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: list):
     numero, cuenta, radicado, juzgado = fila["numero"], fila["cuenta"], fila["radicado"], fila["juzgado"]
 
@@ -1045,6 +1249,7 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         if objetivo and descargar_coincidencia(
             servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, contexto
         ):
+            _finalizar_orden(numero, contexto)
             return
 
     # No hubo coincidencia exacta: se descargan los candidatos que
@@ -1097,6 +1302,8 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                         )
                 for nombre_zip, contenido in adjuntos:
                     _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar, contexto)
+
+    _finalizar_orden(numero, contexto)
 
 
 def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
