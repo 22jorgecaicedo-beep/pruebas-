@@ -319,7 +319,12 @@ def carpeta_contenedora(servicio, item):
 
 def _descargar_archivo_binario(servicio, file_id: str, ruta_local: Path):
     request = servicio.files().get_media(fileId=file_id)
-    with open(ruta_local, "wb") as f:
+    # _ruta_larga_segura antepone el prefijo especial de Windows para
+    # rutas largas -- sin esto, un archivo con nombre/ruta muy larga
+    # (frecuente en Drive, ej. oficios con el nombre completo del
+    # juzgado y las partes) falla con FileNotFoundError al abrirlo,
+    # aunque la ruta "se vea bien".
+    with open(organizador._ruta_larga_segura(str(ruta_local)), "wb") as f:
         downloader = MediaIoBaseDownload(f, request)
         listo = False
         while not listo:
@@ -333,7 +338,7 @@ def _exportar_google_doc(servicio, file_id: str, mime_type: str, ruta_local: Pat
         return
     ruta_final = ruta_local if ruta_local.suffix == extension else ruta_local.with_suffix(ruta_local.suffix + extension)
     request = servicio.files().export_media(fileId=file_id, mimeType=mime_exportar)
-    with open(ruta_final, "wb") as f:
+    with open(organizador._ruta_larga_segura(str(ruta_final)), "wb") as f:
         downloader = MediaIoBaseDownload(f, request)
         listo = False
         while not listo:
@@ -341,7 +346,15 @@ def _exportar_google_doc(servicio, file_id: str, mime_type: str, ruta_local: Pat
 
 
 def descargar_carpeta_drive(servicio, folder_id: str, destino: Path) -> int:
-    """Descarga recursivamente el contenido de la carpeta de Drive 'folder_id' dentro de 'destino'. Devuelve cuantos archivos se descargaron."""
+    """
+    Descarga recursivamente el contenido de la carpeta de Drive
+    'folder_id' dentro de 'destino'. Devuelve cuantos archivos se
+    descargaron. Si un archivo puntual falla (ruta demasiado larga,
+    permisos, antivirus, error de red puntual, etc) se salta con una
+    advertencia y se sigue con el resto -- un solo archivo problematico
+    nunca debe abortar la descarga completa de un proceso, ni mucho
+    menos el resto de la corrida.
+    """
     destino.mkdir(parents=True, exist_ok=True)
     descargados = 0
     page_token = None
@@ -354,16 +367,23 @@ def descargar_carpeta_drive(servicio, folder_id: str, destino: Path) -> int:
         for item in respuesta.get("files", []):
             nombre_seguro = organizador.sanear_nombre(item["name"])
             ruta_local = destino / nombre_seguro
-            if item["mimeType"] == MIME_CARPETA:
-                descargados += descargar_carpeta_drive(servicio, item["id"], ruta_local)
-            elif item["mimeType"] in MIME_EXPORTAR:
-                _exportar_google_doc(servicio, item["id"], item["mimeType"], ruta_local)
-                descargados += 1
-            elif item["mimeType"].startswith("application/vnd.google-apps."):
-                logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
-            else:
-                _descargar_archivo_binario(servicio, item["id"], ruta_local)
-                descargados += 1
+            try:
+                if item["mimeType"] == MIME_CARPETA:
+                    descargados += descargar_carpeta_drive(servicio, item["id"], ruta_local)
+                elif item["mimeType"] in MIME_EXPORTAR:
+                    _exportar_google_doc(servicio, item["id"], item["mimeType"], ruta_local)
+                    descargados += 1
+                elif item["mimeType"].startswith("application/vnd.google-apps."):
+                    logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
+                else:
+                    _descargar_archivo_binario(servicio, item["id"], ruta_local)
+                    descargados += 1
+            except Exception as error:
+                logging.warning(
+                    "   (no se pudo descargar '%s' -- probablemente la ruta es demasiado larga para Windows, o "
+                    "hay un problema de permisos/antivirus/red; se omite y se sigue con el resto: %s)",
+                    item["name"], error,
+                )
         page_token = respuesta.get("nextPageToken")
         if not page_token:
             break
@@ -383,14 +403,21 @@ def _descargar_archivos_sueltos(servicio, archivos, destino: Path) -> int:
     for item in archivos:
         nombre_seguro = organizador.sanear_nombre(item["name"])
         ruta_local = destino / nombre_seguro
-        if item["mimeType"] in MIME_EXPORTAR:
-            _exportar_google_doc(servicio, item["id"], item["mimeType"], ruta_local)
-            descargados += 1
-        elif item["mimeType"].startswith("application/vnd.google-apps."):
-            logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
-        else:
-            _descargar_archivo_binario(servicio, item["id"], ruta_local)
-            descargados += 1
+        try:
+            if item["mimeType"] in MIME_EXPORTAR:
+                _exportar_google_doc(servicio, item["id"], item["mimeType"], ruta_local)
+                descargados += 1
+            elif item["mimeType"].startswith("application/vnd.google-apps."):
+                logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
+            else:
+                _descargar_archivo_binario(servicio, item["id"], ruta_local)
+                descargados += 1
+        except Exception as error:
+            logging.warning(
+                "   (no se pudo descargar '%s' -- probablemente la ruta es demasiado larga para Windows, o hay "
+                "un problema de permisos/antivirus/red; se omite y se sigue con el resto: %s)",
+                item["name"], error,
+            )
     return descargados
 
 
@@ -1169,7 +1196,14 @@ def procesar():
     for fila in faltantes:
         if not fila["radicado"]:
             continue
-        procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar)
+        try:
+            procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar)
+        except Exception as error:
+            logging.error(
+                "[Error] Proceso %s (radicado %s) fallo con un error inesperado y se salta -- se sigue con el "
+                "resto de la lista: %s",
+                fila["numero"], fila["radicado"], error,
+            )
 
     if descargas_a_validar:
         with open(ARCHIVO_REPORTE_A_VALIDAR, "w", newline="", encoding="utf-8-sig") as f:

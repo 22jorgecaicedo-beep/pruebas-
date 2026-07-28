@@ -398,6 +398,14 @@ más ahí adentro -- **no** descarga la carpeta completa (traería folios
 de otros procesos sin relación); solo baja los archivos de esa carpeta
 que de verdad mencionen el radicado (y, si aplica, al demandante ESSA).
 
+**Si un archivo puntual falla al descargarlo** (ruta demasiado larga
+para Windows, permisos, antivirus, un corte de red momentáneo), el
+script lo salta con una advertencia en el log y sigue con el resto --
+un solo archivo problemático nunca detiene la descarga de ese proceso,
+ni mucho menos el resto de la lista. Lo mismo si un proceso entero
+falla por algo inesperado: se registra el error y se sigue con el
+siguiente, en vez de detener toda la corrida a mitad de camino.
+
 **Limpieza automática de corridas anteriores:** al empezar, el script
 también revisa si ya quedaron carpetas "_2", "_3", etc en el disco de
 corridas viejas (por ejemplo, de antes de que existiera el filtro de
