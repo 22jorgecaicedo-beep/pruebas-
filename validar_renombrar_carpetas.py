@@ -756,6 +756,65 @@ def procesar():
         (fila, numero, radicado) for fila, numero, radicado in procesos
     ]
 
+    def renombrar_o_consolidar_con_existente(carpeta, numero, radicado_final, radicado_original, reporte):
+        """
+        Como intentar_renombrar_carpeta, pero si el nombre destino ya
+        existe como una carpeta DISTINTA -- lo tipico cuando una
+        correccion de "[Consecutivo]" apunta a un nombre que ya tiene su
+        propia carpeta (las dos instancias del mismo caso, cada una en su
+        carpeta aparte) -- no se deja como conflicto sin resolver: se
+        trata igual que un duplicado normal. Se conserva bajo el nombre
+        correcto la que tenga MAS ARCHIVOS adentro, y la otra se mueve
+        (nunca se borra) a Duplicados_para_revisar.
+        """
+        nuevo_nombre = f"{numero}. {radicado_final}"
+        destino = carpeta.parent / nuevo_nombre
+
+        if not (destino.exists() and destino.resolve() != carpeta.resolve()):
+            return intentar_renombrar_carpeta(carpeta, numero, radicado_final, radicado_original, reporte)
+
+        archivos_carpeta = contar_archivos(carpeta)
+        archivos_destino = contar_archivos(destino)
+
+        if archivos_carpeta > archivos_destino:
+            # La carpeta con el radicado SIN corregir es la mas completa:
+            # se mueve la que ya tenia el nombre correcto (menos completa)
+            # a Duplicados, y se renombra esta a la que corresponde.
+            carpeta_sobra, hay_que_renombrar = destino, True
+        else:
+            # La que ya tenia el nombre correcto es la mas completa (o
+            # empatan): se mueve la del radicado sin corregir, y no hay
+            # nada mas que renombrar.
+            carpeta_sobra, hay_que_renombrar = carpeta, False
+
+        destino_dup = ruta_libre(carpeta_duplicados, carpeta_sobra.name)
+        if MODO_PRUEBA:
+            logging.info(
+                "[SIMULACION-Consecutivo duplicado] '%s' y '%s' son el mismo caso con distinto consecutivo "
+                "(una ya tenia el nombre correcto, la otra suelta); se conservaria la mas completa como "
+                "'%s', y se moveria '%s' a '%s/%s'.",
+                carpeta.name, destino.name, nuevo_nombre, carpeta_sobra.name,
+                NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+            )
+        else:
+            carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+            carpeta_sobra.rename(destino_dup)
+            logging.info(
+                "[Consecutivo duplicado] '%s' y '%s' eran el mismo caso con distinto consecutivo (una ya "
+                "tenia el nombre correcto, la otra suelta); se conservo la mas completa como '%s', y se "
+                "movio '%s' a '%s/%s'.",
+                carpeta.name, destino.name, nuevo_nombre, carpeta_sobra.name,
+                NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+            )
+            movidos_a_auditar.append((carpeta_sobra.name, destino_dup))
+
+        duplicados_resueltos.append((radicado_final, nuevo_nombre, [(carpeta_sobra.name, destino_dup.name)]))
+
+        if hay_que_renombrar:
+            return intentar_renombrar_carpeta(carpeta, numero, radicado_final, radicado_original, reporte)
+        reporte["ya_correctas"] += 1
+        return True
+
     for radicado_en_carpeta, lista_carpetas in grupos_por_radicado.items():
         # --- Radicado que aparece en el Excel en mas de una fila, con
         # numeros de proceso DISTINTOS: se duplica la carpeta en vez de
@@ -869,7 +928,7 @@ def procesar():
                 )
 
             radicados_encontrados_en_disco.add(radicado_final)
-            intentar_renombrar_carpeta(carpeta, numero, radicado_final, radicado_en_carpeta, reporte)
+            renombrar_o_consolidar_con_existente(carpeta, numero, radicado_final, radicado_en_carpeta, reporte)
             continue
 
         # --- Mas de una carpeta con el MISMO radicado exacto: duplicadas ---
@@ -918,7 +977,7 @@ def procesar():
                 movidos_a_auditar.append((carpeta_extra.name, destino_dup))
             movidas.append((carpeta_extra.name, destino_dup.name))
 
-        intentar_renombrar_carpeta(carpeta_conservar, numero, radicado_final, radicado_en_carpeta, reporte)
+        renombrar_o_consolidar_con_existente(carpeta_conservar, numero, radicado_final, radicado_en_carpeta, reporte)
         duplicados_resueltos.append((radicado_final, nuevo_nombre, movidas))
 
     # --- Carpetas sin radicado EXACTO de 23 digitos: solo se revisan por
