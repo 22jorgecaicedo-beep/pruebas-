@@ -40,8 +40,16 @@ la mueve a Duplicados_para_revisar (nunca la borra) para que la
 revises. Ver consolidar_duplicados_en_disco().
 
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
-busca la carpeta que lo contiene y descarga esa carpeta completa (no
-solo el archivo), asumiendo que ahi esta el resto del expediente.
+busca la carpeta que lo contiene. Si esa carpeta contenedora es
+"propia" del caso (su nombre menciona el radicado, o la busqueda
+encontro directamente la carpeta), descarga la carpeta completa,
+asumiendo que ahi esta el resto del expediente. Pero si la carpeta
+contenedora es GENERICA -- una carpeta de "informes" o "actuaciones"
+que junta documentos de MUCHOS procesos distintos, y el archivo que
+coincidio es solo uno mas ahi adentro -- NO descarga la carpeta
+completa (traeria folios de otros procesos sin relacion), sino
+UNICAMENTE los archivos de esa carpeta que de verdad mencionen este
+radicado (y, si aplica, al demandante ESSA).
 
 Requiere:
   - credenciales_drive.json: credenciales de OAuth de Google Drive (ver
@@ -353,6 +361,30 @@ def descargar_carpeta_drive(servicio, folder_id: str, destino: Path) -> int:
     return descargados
 
 
+def _descargar_archivos_sueltos(servicio, archivos, destino: Path) -> int:
+    """
+    Como descargar_carpeta_drive, pero para una lista puntual de
+    ARCHIVOS (no toda una carpeta) -- se usa cuando la coincidencia con
+    el radicado vino de un archivo suelto dentro de una carpeta
+    GENERICA (ver _carpeta_es_dedicada_al_caso), para no arrastrar el
+    resto de esa carpeta (que puede tener folios de otros procesos).
+    """
+    destino.mkdir(parents=True, exist_ok=True)
+    descargados = 0
+    for item in archivos:
+        nombre_seguro = organizador.sanear_nombre(item["name"])
+        ruta_local = destino / nombre_seguro
+        if item["mimeType"] in MIME_EXPORTAR:
+            _exportar_google_doc(servicio, item["id"], item["mimeType"], ruta_local)
+            descargados += 1
+        elif item["mimeType"].startswith("application/vnd.google-apps."):
+            logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
+        else:
+            _descargar_archivo_binario(servicio, item["id"], ruta_local)
+            descargados += 1
+    return descargados
+
+
 def enlace_de(item) -> str:
     if item.get("mimeType") == MIME_CARPETA:
         return f"https://drive.google.com/drive/folders/{item['id']}"
@@ -450,6 +482,56 @@ def _carpeta_corresponde_al_radicado(servicio, carpeta, radicado: str) -> bool:
         for archivo in respuesta.get("files", [])
         for t in terminos
     )
+
+
+def _carpeta_es_dedicada_al_caso(item, carpeta, radicado: str) -> bool:
+    """
+    True si 'carpeta' es de verdad la carpeta PROPIA de este proceso --
+    porque la busqueda encontro DIRECTAMENTE esa carpeta (item ya es la
+    carpeta), o porque el NOMBRE de la carpeta contenedora menciona el
+    radicado. False si 'carpeta' es solo el padre de un ARCHIVO suelto
+    que coincidio, pero la carpeta EN SI no tiene nada en su nombre que
+    la relacione con este caso -- en ese caso puede ser una carpeta
+    GENERICA compartida por muchos procesos (ej. "02. INFORME 2", "24
+    ENERO", carpetas de actuaciones/informes por fecha), y no es seguro
+    descargarla completa: tendria folios de otros procesos mezclados.
+    """
+    if item.get("id") == carpeta.get("id"):
+        return True
+    terminos = [radicado] + radicados_cortos(radicado)
+    return any(_nombre_coincide(carpeta.get("name", ""), t) for t in terminos)
+
+
+def _archivos_relacionados(servicio, carpeta, radicado: str):
+    """Archivos (no subcarpetas) de primer nivel de 'carpeta' cuyo NOMBRE mencione el radicado (completo o corto)."""
+    terminos = [radicado] + radicados_cortos(radicado)
+    try:
+        respuesta = servicio.files().list(
+            q=f"'{carpeta['id']}' in parents and trashed = false",
+            fields="files(id, name, mimeType)",
+        ).execute()
+    except HttpError:
+        return []
+    return [
+        archivo for archivo in respuesta.get("files", [])
+        if archivo.get("mimeType") != MIME_CARPETA
+        and any(_nombre_coincide(archivo.get("name", ""), t) for t in terminos)
+    ]
+
+
+def _archivos_tienen_demandante_valido(servicio, archivos) -> bool:
+    """Version de _carpeta_tiene_demandante_valido para una lista puntual de archivos (ver _archivos_relacionados)."""
+    if any(_nombre_coincide(a.get("name", ""), t) for a in archivos for t in TERMINOS_DEMANDANTE_VALIDO):
+        return True
+    candidatos_contenido = [
+        a for a in archivos
+        if Path(a.get("name", "")).suffix.lower() in EXTENSIONES_CONTENIDO_DRIVE
+    ]
+    for archivo in candidatos_contenido[:MAX_ARCHIVOS_CONTENIDO_A_REVISAR]:
+        texto = _texto_de_archivo_drive(servicio, archivo)
+        if any(_nombre_coincide(texto, t) for t in TERMINOS_DEMANDANTE_VALIDO):
+            return True
+    return False
 
 
 def _texto_de_archivo_drive(servicio, archivo) -> str:
@@ -735,20 +817,29 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
 
     'contexto' es un dict COMPARTIDO por todos los candidatos de ESTE
     MISMO proceso en esta corrida (ver procesar_faltante), con:
-      - "ya_descargados": set de ID de carpeta de Drive ya bajados --
-        la busqueda por radicado corto/cuenta/correo puede encontrar la
-        MISMA carpeta de Drive varias veces (ej. por dos formatos
-        distintos del radicado corto); si ya se descargo, se omite en
-        vez de volver a bajar los mismos archivos otra vez.
+      - "ya_descargados": set de ID (de carpeta, o de archivo suelto)
+        ya bajados -- la busqueda por radicado corto/cuenta/correo
+        puede encontrar el MISMO elemento varias veces (ej. por dos
+        formatos distintos del radicado corto); si ya se descargo, se
+        omite en vez de volver a bajar los mismos archivos otra vez.
       - "destino": la carpeta de destino ya asignada en el disco para
         este proceso (None hasta el primer candidato). Si un SEGUNDO
-        candidato (otra carpeta de Drive distinta, que tambien paso las
-        validaciones de radicado y demandante) aparece para el mismo
-        proceso, su contenido se FUSIONA dentro de esa misma carpeta en
-        vez de crear "_2", "_3", etc -- asi, si el expediente esta
-        repartido en varias carpetas de Drive (ej. una con el "poder" y
-        otra con el "expediente"), todo termina junto en UNA sola
-        carpeta en el disco.
+        candidato (otra carpeta/archivo de Drive distinto, que tambien
+        paso las validaciones de radicado y demandante) aparece para el
+        mismo proceso, su contenido se FUSIONA dentro de esa misma
+        carpeta en vez de crear "_2", "_3", etc -- asi, si el
+        expediente esta repartido en varias carpetas de Drive (ej. una
+        con el "poder" y otra con el "expediente"), todo termina junto
+        en UNA sola carpeta en el disco.
+
+    Si 'item' era un ARCHIVO suelto que vive dentro de una carpeta
+    GENERICA (una carpeta cuyo propio nombre no tiene nada que ver con
+    este radicado -- ver _carpeta_es_dedicada_al_caso -- tipico de
+    carpetas de "informes" o "actuaciones" que juntan documentos de
+    MUCHOS procesos distintos), NO se descarga esa carpeta completa
+    (traeria folios de otros casos mezclados): solo se bajan, de esa
+    carpeta, los archivos de primer nivel que de verdad mencionen este
+    radicado.
 
     Devuelve True si quedo lista (o se simulo, o ya estaba descargada de
     una busqueda anterior).
@@ -770,7 +861,32 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
         )
         return False
 
-    if not confiable and not _carpeta_tiene_demandante_valido(servicio, carpeta):
+    dedicada = _carpeta_es_dedicada_al_caso(item, carpeta, radicado)
+    archivos_sueltos = None
+
+    if not dedicada:
+        # El archivo que coincidio vive en una carpeta GENERICA (su
+        # nombre no tiene nada que ver con este radicado) -- se acota
+        # la descarga solo a los archivos de esa carpeta que de verdad
+        # lo mencionen, para no arrastrar el resto (folios de otros
+        # procesos).
+        archivos_sueltos = _archivos_relacionados(servicio, carpeta, radicado)
+        if not archivos_sueltos:
+            logging.info(
+                "   (se omite '%s': el archivo que coincidio esta dentro de una carpeta generica sin relacion "
+                "directa con el radicado %s, y no se encontraron mas archivos ahi que lo mencionen -- se evita "
+                "bajar la carpeta completa)",
+                carpeta["name"], radicado,
+            )
+            return False
+        if not confiable and not _archivos_tienen_demandante_valido(servicio, archivos_sueltos):
+            logging.info(
+                "   (se omite '%s': los archivos que mencionan el radicado %s no mencionan a ESSA/"
+                "Electrificadora de Santander -- se evita bajar la carpeta generica completa)",
+                carpeta["name"], radicado,
+            )
+            return False
+    elif not confiable and not _carpeta_tiene_demandante_valido(servicio, carpeta):
         logging.info(
             "   (se omite '%s': coincide por %s y menciona el radicado %s, pero no se encontro a ESSA/"
             "Electrificadora de Santander como demandante -- probablemente es de otro proceso del mismo cliente)",
@@ -778,43 +894,79 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
         )
         return False
 
-    if carpeta["id"] in contexto["ya_descargados"]:
-        logging.info(
-            "   (la carpeta '%s' ya se habia descargado para el proceso %s por otra busqueda; se omite duplicado)",
-            carpeta["name"], numero,
-        )
-        return True
-    contexto["ya_descargados"].add(carpeta["id"])
+    if dedicada:
+        if carpeta["id"] in contexto["ya_descargados"]:
+            logging.info(
+                "   (la carpeta '%s' ya se habia descargado para el proceso %s por otra busqueda; se omite duplicado)",
+                carpeta["name"], numero,
+            )
+            return True
+        contexto["ya_descargados"].add(carpeta["id"])
+    else:
+        archivos_sueltos = [a for a in archivos_sueltos if a["id"] not in contexto["ya_descargados"]]
+        if not archivos_sueltos:
+            logging.info(
+                "   (los archivos de '%s' relacionados con el proceso %s ya se habian descargado por otra "
+                "busqueda; se omite duplicado)",
+                carpeta["name"], numero,
+            )
+            return True
+        contexto["ya_descargados"].update(a["id"] for a in archivos_sueltos)
 
     destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
     if MODO_PRUEBA:
-        verbo = "se descargaria" if es_el_primero else "se fusionaria (junto con lo ya encontrado)"
-        logging.info(
-            "[SIMULACION%s] Proceso %s (radicado %s, %s): %s la carpeta de Drive '%s' (%s) en '%s'.",
-            etiqueta, numero, radicado, motivo, verbo, carpeta["name"], enlace_de(carpeta), destino.name,
-        )
+        if dedicada:
+            verbo = "se descargaria" if es_el_primero else "se fusionaria (junto con lo ya encontrado)"
+            logging.info(
+                "[SIMULACION%s] Proceso %s (radicado %s, %s): %s la carpeta de Drive '%s' (%s) en '%s'.",
+                etiqueta, numero, radicado, motivo, verbo, carpeta["name"], enlace_de(carpeta), destino.name,
+            )
+            nombre_origen = carpeta["name"]
+        else:
+            verbo = "se descargarian" if es_el_primero else "se fusionarian (junto con lo ya encontrado)"
+            logging.info(
+                "[SIMULACION%s] Proceso %s (radicado %s, %s): %s SOLO %d archivo(s) que mencionan el radicado, "
+                "de la carpeta generica '%s' (%s), en '%s' -- no la carpeta completa, para no traer folios de "
+                "otros procesos.",
+                etiqueta, numero, radicado, motivo, verbo, len(archivos_sueltos), carpeta["name"],
+                enlace_de(carpeta), destino.name,
+            )
+            nombre_origen = f"{carpeta['name']} (solo {len(archivos_sueltos)} archivo(s) relacionados)"
         if not confiable:
-            descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
+            descargas_a_validar.append((numero, radicado, motivo, nombre_origen, enlace_de(carpeta), destino.name))
         return True
 
-    if es_el_primero:
-        archivos = descargar_carpeta_drive(servicio, carpeta["id"], destino)
-        cruce_excel.aplanar_carpeta_anidada_unica(destino)
-        accion = "Descargado"
+    if dedicada:
+        if es_el_primero:
+            archivos = descargar_carpeta_drive(servicio, carpeta["id"], destino)
+            cruce_excel.aplanar_carpeta_anidada_unica(destino)
+            accion = "Descargado"
+        else:
+            temporal = destino.parent / f"_tmp_fusion_{carpeta['id']}"
+            archivos = descargar_carpeta_drive(servicio, carpeta["id"], temporal)
+            cruce_excel.aplanar_carpeta_anidada_unica(temporal)
+            _fusionar_sin_perder_nada(temporal, destino)
+            accion = "Fusionado"
+        nombre_origen = carpeta["name"]
     else:
-        temporal = destino.parent / f"_tmp_fusion_{carpeta['id']}"
-        archivos = descargar_carpeta_drive(servicio, carpeta["id"], temporal)
-        cruce_excel.aplanar_carpeta_anidada_unica(temporal)
-        _fusionar_sin_perder_nada(temporal, destino)
-        accion = "Fusionado"
+        if es_el_primero:
+            archivos = _descargar_archivos_sueltos(servicio, archivos_sueltos, destino)
+            accion = "Descargado"
+        else:
+            temporal = destino.parent / f"_tmp_fusion_archivos_{carpeta['id']}_{id(archivos_sueltos)}"
+            archivos = _descargar_archivos_sueltos(servicio, archivos_sueltos, temporal)
+            _fusionar_sin_perder_nada(temporal, destino)
+            accion = "Fusionado"
+        nombre_origen = f"{carpeta['name']} (solo {len(archivos_sueltos)} archivo(s) relacionados, no la carpeta completa)"
+
     logging.info(
         "[%s%s] Proceso %s (radicado %s, %s): '%s' (%s) -> '%s' (%d archivo(s)).",
-        accion, etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name, archivos,
+        accion, etiqueta, numero, radicado, motivo, nombre_origen, enlace_de(carpeta), destino.name, archivos,
     )
     if not confiable:
-        descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
+        descargas_a_validar.append((numero, radicado, motivo, nombre_origen, enlace_de(carpeta), destino.name))
     return True
 
 

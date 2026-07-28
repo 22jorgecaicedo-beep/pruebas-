@@ -376,8 +376,14 @@ La diferencia con el caso 1 es que estos quedan marcados aparte en
 se fusionó), para que después confirmes que todo corresponde al mismo
 proceso y borres a mano lo que no corresponda (el script nunca borra
 nada por su cuenta). Si lo que encuentra es un archivo suelto (no una
-carpeta), busca la carpeta que lo contiene y descarga esa carpeta
-completa.
+carpeta), busca la carpeta que lo contiene. Si esa carpeta es "propia"
+del caso (su nombre menciona el radicado, o la búsqueda encontró
+directamente la carpeta) descarga la carpeta completa. Pero si es una
+carpeta **genérica** -- de "informes" o "actuaciones" que junta
+documentos de varios procesos, y el archivo que coincidió es solo uno
+más ahí adentro -- **no** descarga la carpeta completa (traería folios
+de otros procesos sin relación); solo baja los archivos de esa carpeta
+que de verdad mencionen el radicado (y, si aplica, al demandante ESSA).
 
 **Limpieza automática de corridas anteriores:** al empezar, el script
 también revisa si ya quedaron carpetas "_2", "_3", etc en el disco de
