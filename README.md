@@ -103,6 +103,15 @@ ventana:
    Descargas (y correo, si configuraste `credenciales_sgde.txt`) de forma
    indefinida.
 
+**Importante**: los dos pasos corren UNO DESPUÉS DEL OTRO, no al mismo
+tiempo -- mientras el Paso 1 sigue trabajando (puede tardar varios
+minutos si `VALIDAR_CONTENIDO_CONTRA_NOMBRE = True`), la vigilancia de
+Descargas todavía no ha arrancado, así que un zip que descargues justo
+en ese momento no se procesa solo. Si quieres que la vigilancia esté
+corriendo siempre, sin depender de que termine el Paso 1, abre
+`vigilar.bat` en una ventana aparte -- corre solo `procesos_juridicos.py`
+de una vez, sin esperar nada.
+
 O si prefieres correr cada uno por separado, desde una terminal:
 
 ```
