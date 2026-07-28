@@ -126,6 +126,43 @@ try:
 except ImportError:
     docx = None
 
+
+def encontrar_disco_por_etiqueta(etiqueta_buscada: str):
+    """
+    Busca, entre TODAS las unidades conectadas (A: a Z:), la que tenga como
+    ETIQUETA DE VOLUMEN (el nombre del disco -- se ve en "Este equipo" y en
+    Propiedades del disco) el texto 'etiqueta_buscada' (sin importar
+    mayusculas/minusculas ni espacios de mas), y devuelve su ruta actual
+    (ej. "D:/"). Esto es a proposito para NO depender de una letra de
+    unidad fija: Windows puede asignarle una letra distinta al mismo disco
+    duro externo cada vez que se conecta (por ejemplo D: una vez y E: otra,
+    segun que otros dispositivos esten conectados), y una letra fija en el
+    codigo se desincroniza tarde o temprano.
+    Devuelve None si no corre en Windows, o si no encuentra ningun disco
+    con esa etiqueta conectado en este momento (por ejemplo si el disco
+    esta desconectado).
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        buffer_etiqueta = ctypes.create_unicode_buffer(261)
+        objetivo = etiqueta_buscada.strip().upper()
+        for letra in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            raiz = f"{letra}:\\"
+            if not os.path.exists(raiz):
+                continue
+            ok = ctypes.windll.kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(raiz), buffer_etiqueta, ctypes.sizeof(buffer_etiqueta),
+                None, None, None, None, 0,
+            )
+            if ok and buffer_etiqueta.value.strip().upper() == objetivo:
+                return f"{letra}:/"
+    except Exception:
+        pass
+    return None
+
+
 # ============================= CONFIGURACION =============================
 
 # Ruta al informe de Excel (.xlsx o .xlsm).
@@ -142,11 +179,26 @@ FILA_ENCABEZADO = 5
 COLUMNA_NO = "No."
 COLUMNA_RADICADO = "RADICADO"
 
+# Nombre (etiqueta de volumen) de tu disco duro externo, tal como aparece en
+# "Este equipo" y en Propiedades del disco. El script busca ese disco por
+# su NOMBRE entre todas las unidades conectadas y usa la letra que
+# encuentre en ese momento -- asi no importa si Windows le asigna D:, E:,
+# o cualquier otra letra la proxima vez que lo conectes.
+ETIQUETA_DISCO_EXTERNO = "OSCAL"
+
+# Letra de respaldo, SOLO por si el disco no se encuentra por su nombre
+# (ej. esta desconectado, o no estas en Windows). En circunstancias
+# normales no se deberia llegar a usar esta; si el log dice que se esta
+# usando, el disco no se encontro por nombre y hay que revisar por que.
+CARPETA_PROCESOS_RESPALDO = r"E:/"
+
+_disco_detectado = encontrar_disco_por_etiqueta(ETIQUETA_DISCO_EXTERNO)
+
 # Carpeta del disco duro donde estan las carpetas de cada proceso (las que
-# hoy tienen solo el radicado de 23 digitos como nombre): tu disco duro
-# externo. Si las carpetas estan dentro de otra carpeta ahi (no directo en
-# la raiz de D:), agrega esa carpeta aqui, ej: r"D:/Procesos".
-CARPETA_PROCESOS = r"E:/"
+# hoy tienen solo el radicado de 23 digitos como nombre). Si las carpetas
+# estan dentro de otra carpeta ahi (no directo en la raiz del disco),
+# agrega esa carpeta aqui, ej: CARPETA_PROCESOS += "Procesos".
+CARPETA_PROCESOS = _disco_detectado or CARPETA_PROCESOS_RESPALDO
 
 # Carpeta donde caen tus descargas (para revisar si una carpeta vacia tiene
 # un .zip pendiente de extraer ahi). Se detecta sola como "Downloads" del
@@ -620,6 +672,20 @@ def intentar_renombrar_carpeta(carpeta: Path, numero: int, radicado_final: str, 
 
 
 def procesar():
+    if _disco_detectado:
+        logging.info(
+            "[Disco] Se encontro el disco '%s' conectado como %s; se usa esa ruta.",
+            ETIQUETA_DISCO_EXTERNO, CARPETA_PROCESOS,
+        )
+    else:
+        logging.warning(
+            "[Disco] No se encontro ningun disco llamado '%s' conectado ahorita; se usa la ruta de "
+            "respaldo %s, que puede estar desactualizada. Verifica que el disco externo este conectado "
+            "y que su nombre sea exactamente '%s' (click derecho sobre el disco en 'Este equipo' -> "
+            "Propiedades -> el campo de arriba con el nombre).",
+            ETIQUETA_DISCO_EXTERNO, CARPETA_PROCESOS, ETIQUETA_DISCO_EXTERNO,
+        )
+
     # --- Doble lectura independiente del Excel, para confirmar que el
     # resultado es estable antes de tocar ninguna carpeta ---
     validas_1, casi_validas_1 = leer_filas_excel(silencioso=False)

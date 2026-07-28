@@ -43,8 +43,15 @@ Abre `procesos_juridicos.py` y edita, al inicio del archivo, la sección
 
 - `CARPETA_DESCARGAS`: carpeta donde el navegador guarda los `.zip`
   (por ejemplo `C:\Users\TuUsuario\Downloads`).
-- `CARPETA_DESTINO`: carpeta en el disco duro donde se organizarán los
-  procesos (por ejemplo `D:\ProcesosJuridicos`).
+- `ETIQUETA_DISCO_EXTERNO`: el NOMBRE de tu disco duro externo (por
+  ejemplo `"OSCAL"`, tal como aparece en "Este equipo"). El script busca
+  el disco por ese nombre entre todas las unidades conectadas y usa la
+  letra que encuentre en ese momento -- así no importa si Windows le
+  asigna `D:`, `E:` o cualquier otra letra la próxima vez que lo
+  conectes. `CARPETA_DESTINO` se calcula sola a partir de esto; no hace
+  falta que edites `CARPETA_DESTINO` directamente. Si el disco no se
+  encuentra conectado, se usa `CARPETA_DESTINO_RESPALDO` como respaldo
+  (y el log avisa claramente que pasó eso).
 - `PATRONES_RADICADO`: usados solo para zips que descargues a mano.
   Reconoce por defecto el radicado judicial colombiano de 23 dígitos.
 
@@ -180,8 +187,10 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
    - `HOJA_EXCEL`, `FILA_ENCABEZADO`, `COLUMNA_NO`, `COLUMNA_RADICADO`: en
      qué hoja y fila están los encabezados, y cómo se llaman las columnas
      del número de proceso y del radicado.
-   - `CARPETA_PROCESOS`: carpeta del disco duro donde están las carpetas de
-     cada proceso.
+   - `ETIQUETA_DISCO_EXTERNO`: el NOMBRE de tu disco duro externo (por
+     ejemplo `"OSCAL"`). `CARPETA_PROCESOS` se calcula sola buscando ese
+     disco por su nombre entre las unidades conectadas, así no importa
+     qué letra (`D:`, `E:`, etc) le asigne Windows esta vez.
    - `CARPETA_DESCARGAS`: tu carpeta de Descargas (se detecta sola). Se usa
      solo para revisar si una carpeta vacía tiene un `.zip` pendiente de
      extraer ahí.

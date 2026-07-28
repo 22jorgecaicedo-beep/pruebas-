@@ -72,6 +72,39 @@ try:
 except ImportError:
     cruce_excel = None
 
+
+def encontrar_disco_por_etiqueta(etiqueta_buscada: str):
+    """
+    Busca, entre TODAS las unidades conectadas (A: a Z:), la que tenga como
+    ETIQUETA DE VOLUMEN (el nombre del disco -- se ve en "Este equipo" y en
+    Propiedades del disco) el texto 'etiqueta_buscada', y devuelve su ruta
+    actual (ej. "D:/"). Se hace esto a proposito para NO depender de una
+    letra de unidad fija: Windows puede asignarle una letra distinta al
+    mismo disco externo cada vez que se conecta.
+    Devuelve None si no corre en Windows, o si no encuentra ningun disco
+    con esa etiqueta conectado en este momento.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        buffer_etiqueta = ctypes.create_unicode_buffer(261)
+        objetivo = etiqueta_buscada.strip().upper()
+        for letra in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            raiz = f"{letra}:\\"
+            if not os.path.exists(raiz):
+                continue
+            ok = ctypes.windll.kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(raiz), buffer_etiqueta, ctypes.sizeof(buffer_etiqueta),
+                None, None, None, None, 0,
+            )
+            if ok and buffer_etiqueta.value.strip().upper() == objetivo:
+                return f"{letra}:/"
+    except Exception:
+        pass
+    return None
+
+
 # ============================= CONFIGURACION =============================
 
 # --- General ---
@@ -83,9 +116,22 @@ except ImportError:
 # por algo como CARPETA_DESCARGAS = r"C:\Users\TuUsuario\Downloads".
 CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
 
+# Nombre (etiqueta de volumen) de tu disco duro externo, tal como aparece
+# en "Este equipo" y en Propiedades del disco. Se busca por NOMBRE entre
+# todas las unidades conectadas, asi no importa que letra (D:, E:, etc) le
+# asigne Windows esta vez.
+ETIQUETA_DISCO_EXTERNO = "OSCAL"
+
+# Letra de respaldo, SOLO por si el disco no se encuentra por su nombre
+# (desconectado, o no estas en Windows). Si el log dice que se esta usando
+# esta ruta de respaldo, hay que revisar por que no se encontro el disco.
+CARPETA_DESTINO_RESPALDO = r"E:/"
+
+_disco_detectado = encontrar_disco_por_etiqueta(ETIQUETA_DISCO_EXTERNO)
+
 # Carpeta en el disco duro donde se organizan los procesos ya extraidos
 # (tu disco duro externo con los radicados).
-CARPETA_DESTINO = r"E:/"
+CARPETA_DESTINO = _disco_detectado or CARPETA_DESTINO_RESPALDO
 
 ARCHIVO_LOG = os.path.join(CARPETA_DESTINO, "procesos_juridicos.log")
 
@@ -910,6 +956,18 @@ def iniciar_vigilancia_correo(usuario: str, app_password: str):
 
 def main():
     configurar_logging()
+    if _disco_detectado:
+        logging.info(
+            "[Disco] Se encontro el disco '%s' conectado como %s; se usa esa ruta.",
+            ETIQUETA_DISCO_EXTERNO, CARPETA_DESTINO,
+        )
+    else:
+        logging.warning(
+            "[Disco] No se encontro ningun disco llamado '%s' conectado ahorita; se usa la ruta de "
+            "respaldo %s, que puede estar desactualizada. Verifica que el disco externo este "
+            "conectado y que su nombre sea exactamente '%s' antes de seguir.",
+            ETIQUETA_DISCO_EXTERNO, CARPETA_DESTINO, ETIQUETA_DISCO_EXTERNO,
+        )
     Path(CARPETA_DESCARGAS).mkdir(parents=True, exist_ok=True)
     Path(CARPETA_DESTINO).mkdir(parents=True, exist_ok=True)
     verificar_cruce_excel()
