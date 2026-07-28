@@ -191,6 +191,14 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      ejemplo `"OSCAL"`). `CARPETA_PROCESOS` se calcula sola buscando ese
      disco por su nombre entre las unidades conectadas, así no importa
      qué letra (`D:`, `E:`, etc) le asigne Windows esta vez.
+   - `CARPETA_ENTRADA_ADICIONAL`: una carpeta aparte (por defecto
+     `PROCESOS LAUE/ENTREGA EXPEDIENTE ESSA` dentro del disco) donde a
+     veces caen entregas masivas de expedientes ya extraídos que todavía
+     no se pasan a la raíz. Si existe, el script mueve a la raíz los que
+     tengan radicado válido en el Excel y no estén ya en el disco, deja
+     donde están los que ya existan (avisando), y deja aparte (avisando)
+     los que no tengan proceso en el Excel. Si la ruta no existe, este
+     paso simplemente se omite.
    - `CARPETA_DESCARGAS`: tu carpeta de Descargas (se detecta sola). Se usa
      solo para revisar si una carpeta vacía tiene un `.zip` pendiente de
      extraer ahí.

@@ -86,6 +86,14 @@ Verificacion mas profunda (solo detecta y reporta, no modifica nada):
     se marca si el propio radicado SI aparece (aunque tambien aparezcan
     otros, por referencias cruzadas a casos relacionados).
 
+Carpeta de entrada ADICIONAL (CARPETA_ENTRADA_ADICIONAL, ej. una entrega
+masiva de expedientes que todavia no se paso a la raiz del disco): si
+existe, se revisa antes que la raiz. Los procesos que ya esten en la raiz
+se dejan ahi (se informa); los que tengan radicado valido en el Excel y
+AUN NO esten en la raiz se MUEVEN a la raiz para que el resto de esta
+misma corrida los termine de nombrar; los que no tengan proceso en el
+Excel se dejan donde estan y se informan aparte.
+
 Al terminar, reporta (en pantalla y en un log):
   - Carpetas renombradas (o que se renombrarian, en modo prueba).
   - Carpetas duplicadas resueltas (cual se conservo, cuales se movieron).
@@ -199,6 +207,16 @@ _disco_detectado = encontrar_disco_por_etiqueta(ETIQUETA_DISCO_EXTERNO)
 # estan dentro de otra carpeta ahi (no directo en la raiz del disco),
 # agrega esa carpeta aqui, ej: CARPETA_PROCESOS += "Procesos".
 CARPETA_PROCESOS = _disco_detectado or CARPETA_PROCESOS_RESPALDO
+
+# Carpeta ADICIONAL (opcional) donde a veces caen procesos ya extraidos que
+# todavia no se han pasado a la raiz del disco (ej. una entrega masiva de
+# expedientes). Si existe, el script la revisa ademas de la raiz: los
+# procesos que YA esten en la raiz se dejan donde estan (se informa), y
+# los que tengan radicado valido en el Excel pero AUN NO esten en la raiz
+# se MUEVEN a la raiz del disco para que el resto del script los termine
+# de nombrar en esta misma corrida. Si la ruta no existe, este paso se
+# omite sin problema -- no hace falta comentarlo ni nada.
+CARPETA_ENTRADA_ADICIONAL = os.path.join(CARPETA_PROCESOS, "PROCESOS LAUE", "ENTREGA EXPEDIENTE ESSA")
 
 # Carpeta donde caen tus descargas (para revisar si una carpeta vacia tiene
 # un .zip pendiente de extraer ahi). Se detecta sola como "Downloads" del
@@ -596,6 +614,30 @@ def subcarpetas_con_radicado(carpeta_padre: Path):
     return encontradas
 
 
+def buscar_carpetas_de_proceso(carpeta_base: Path):
+    """
+    Recorre RECURSIVAMENTE carpeta_base y devuelve [(carpeta, radicado), ...]
+    para cada carpeta que tenga un radicado EXACTO de 23 digitos en su
+    nombre. En cuanto encuentra una asi, NO sigue bajando dentro de ella
+    (se asume que todo lo de adentro es contenido propio de ese caso, no
+    otros procesos sueltos) -- solo sigue bajando por carpetas
+    "organizadoras" sin radicado propio en el nombre (ej. carpetas por
+    año o por tipo de tramite).
+    """
+    encontradas = []
+    try:
+        hijos = [h for h in carpeta_base.iterdir() if h.is_dir()]
+    except OSError:
+        return encontradas
+    for hijo in hijos:
+        radicado = radicado_de_nombre_carpeta(hijo.name)
+        if radicado:
+            encontradas.append((hijo, radicado))
+        else:
+            encontradas.extend(buscar_carpetas_de_proceso(hijo))
+    return encontradas
+
+
 def _buscar_zip_en_carpeta(carpeta: Path, radicado: str):
     try:
         for archivo in carpeta.iterdir():
@@ -724,6 +766,72 @@ def procesar():
 
     carpeta_raiz = Path(CARPETA_PROCESOS)
     carpeta_duplicados = carpeta_raiz / NOMBRE_CARPETA_DUPLICADOS
+
+    reporte = {
+        "renombradas": [],  # (nombre_original, nuevo_nombre)
+        "ya_correctas": 0,
+        "conflictos": 0,
+    }
+    radicados_encontrados_en_disco = set()
+    sin_proceso_en_excel = []
+    posibles_coincidencias = []
+    duplicados_resueltos = []  # (radicado, nombre_conservado_nuevo, [(nombre_movido, destino_dup)])
+    duplicados_sin_resolver = []  # (radicado, [nombres]) -- no se pudo determinar el numero
+    duplicados_por_excel = []  # (radicado, [numeros], [nombres_de_carpeta_resultantes])
+    movidos_a_auditar = []  # (nombre_original, ruta_destino) para la revision final
+
+    # --- Carpeta de entrada adicional (ej. "PROCESOS LAUE/ENTREGA
+    # EXPEDIENTE ESSA"): procesos ya extraidos que todavia no se han
+    # pasado a la raiz del disco. Los que YA tengan carpeta en la raiz se
+    # dejan donde estan (se informa al final); los que tengan radicado
+    # valido en el Excel (directo, o duplicado en el Excel con varios
+    # numeros) y AUN NO esten en la raiz se MUEVEN a la raiz para que el
+    # resto de esta misma corrida los termine de nombrar; los que no
+    # tengan proceso en el Excel se dejan donde estan y se informan
+    # aparte. Si la ruta no existe, este paso se omite sin problema.
+    laue_movidas = []               # (nombre_original, radicado)
+    laue_ya_en_disco = []           # (nombre_original, radicado)
+    laue_sin_proceso_en_excel = []  # (nombre_original, radicado)
+    carpeta_entrada_adicional = Path(CARPETA_ENTRADA_ADICIONAL)
+    if carpeta_entrada_adicional.exists():
+        radicados_ya_en_raiz = set()
+        for d in carpeta_raiz.iterdir():
+            if d.is_dir() and d.name not in CARPETAS_A_IGNORAR:
+                r = radicado_de_nombre_carpeta(d.name)
+                if r:
+                    radicados_ya_en_raiz.add(r)
+
+        for carpeta_laue, radicado_laue in buscar_carpetas_de_proceso(carpeta_entrada_adicional):
+            if radicado_laue in radicados_ya_en_raiz:
+                laue_ya_en_disco.append((carpeta_laue.name, radicado_laue))
+                continue
+
+            if radicado_laue not in por_radicado and radicado_laue not in radicados_para_duplicar:
+                laue_sin_proceso_en_excel.append((carpeta_laue.name, radicado_laue))
+                continue
+
+            destino_laue = ruta_libre(carpeta_raiz, carpeta_laue.name)
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION-LAUE] '%s' (dentro de %s) se moveria a la raiz del disco para "
+                    "terminar de nombrarse en esta misma corrida.",
+                    carpeta_laue.name, CARPETA_ENTRADA_ADICIONAL,
+                )
+            else:
+                carpeta_laue.rename(destino_laue)
+                logging.info(
+                    "[LAUE] '%s' (dentro de %s) se movio a la raiz del disco como '%s' para terminar "
+                    "de nombrarse en esta misma corrida.",
+                    carpeta_laue.name, CARPETA_ENTRADA_ADICIONAL, destino_laue.name,
+                )
+                # No se agrega a movidos_a_auditar: esta carpeta todavia le
+                # falta el paso de renombrado normal (le agrega "numero. "
+                # al nombre) mas abajo en esta misma corrida, asi que este
+                # nombre intermedio (solo el radicado) no es el final --
+                # ese renombrado se audita solo mas abajo, via 'reporte'.
+            laue_movidas.append((carpeta_laue.name, radicado_laue))
+            radicados_ya_en_raiz.add(radicado_laue)
+
     carpetas = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
 
     # Agrupa las carpetas por su radicado EXACTO (ignora prefijo "numero."
@@ -738,19 +846,6 @@ def procesar():
             grupos_por_radicado.setdefault(radicado, []).append(carpeta)
         else:
             carpetas_sin_radicado_exacto.append(carpeta)
-
-    reporte = {
-        "renombradas": [],  # (nombre_original, nuevo_nombre)
-        "ya_correctas": 0,
-        "conflictos": 0,
-    }
-    radicados_encontrados_en_disco = set()
-    sin_proceso_en_excel = []
-    posibles_coincidencias = []
-    duplicados_resueltos = []  # (radicado, nombre_conservado_nuevo, [(nombre_movido, destino_dup)])
-    duplicados_sin_resolver = []  # (radicado, [nombres]) -- no se pudo determinar el numero
-    duplicados_por_excel = []  # (radicado, [numeros], [nombres_de_carpeta_resultantes])
-    movidos_a_auditar = []  # (nombre_original, ruta_destino) para la revision final
 
     candidatos_cercanos = procesos_casi_validos + [
         (fila, numero, radicado) for fila, numero, radicado in procesos
@@ -1199,6 +1294,23 @@ def procesar():
                 radicado, numeros, nombres,
             )
 
+    if laue_movidas or laue_ya_en_disco or laue_sin_proceso_en_excel:
+        logging.info(
+            "[LAUE] Revision de '%s': %d carpeta(s) se movieron a la raiz del disco, %d ya estaban en el "
+            "disco (se dejaron donde estaban), %d no tienen proceso en el Excel (se dejaron donde estaban).",
+            CARPETA_ENTRADA_ADICIONAL, len(laue_movidas), len(laue_ya_en_disco), len(laue_sin_proceso_en_excel),
+        )
+        for nombre, radicado in laue_movidas:
+            logging.info("   - Movida a la raiz: '%s' (radicado %s)", nombre, radicado)
+        for nombre, radicado in laue_ya_en_disco:
+            logging.info("   - Ya estaba en el disco, se dejo en LAUE: '%s' (radicado %s)", nombre, radicado)
+        for nombre, radicado in laue_sin_proceso_en_excel:
+            logging.warning(
+                "   - Sin proceso en el Excel, se dejo en LAUE: '%s' (radicado %s) -- revisa si falta "
+                "agregarla al informe.",
+                nombre, radicado,
+            )
+
     if anidadas_mismo_caso:
         logging.info(
             "[Anidadas resueltas] %d carpeta(s) estaban metidas dentro de otra carpeta del MISMO caso; "
@@ -1247,6 +1359,8 @@ def procesar():
     logging.info(
         "Resumen: %d %s, %d ya tenian el nombre correcto, %d duplicado(s) resuelto(s) (movidos a %s), "
         "%d radicado(s) duplicado(s) en el Excel (carpeta duplicada para cada numero), "
+        "%d carpeta(s) movidas desde LAUE, %d ya estaban en el disco (se dejaron en LAUE), "
+        "%d en LAUE sin proceso en el Excel, "
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
@@ -1256,6 +1370,7 @@ def procesar():
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
         reporte["ya_correctas"], len(duplicados_resueltos), NOMBRE_CARPETA_DUPLICADOS,
         len(duplicados_por_excel),
+        len(laue_movidas), len(laue_ya_en_disco), len(laue_sin_proceso_en_excel),
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
         len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_sin_radicado),
