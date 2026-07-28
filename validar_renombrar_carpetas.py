@@ -1300,6 +1300,7 @@ def procesar():
     contenido_no_corresponde = []  # (nombre, radicado_esperado, radicado_dominante_en_contenido, veces)
     carpetas_rellenadas_desde_duplicados = []  # (nombre, nombre_donante, archivos_copiados)
     carpetas_rellenadas_desde_zip = []  # (nombre, zip, ubicacion, archivos_extraidos, archivos_fallidos)
+    carpetas_aplanadas_historicas = []  # (nombre, nombre_subcarpeta_vieja)
 
     carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
     for carpeta in carpetas_finales:
@@ -1329,6 +1330,7 @@ def procesar():
                     )
                 else:
                     shutil.copytree(donante, carpeta, dirs_exist_ok=True)
+                    aplanar_carpeta_anidada_unica(carpeta)
                     numero_archivos = contar_archivos(carpeta)
                     logging.info(
                         "[Vacia-Rellenada] '%s' estaba vacia; se le copiaron los %d archivo(s) de la "
@@ -1378,11 +1380,40 @@ def procesar():
 
                 if numero_archivos == 0:
                     carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
-        elif VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
-            radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
-            if radicados_hallados and radicado_exacto not in radicados_hallados:
-                radicado_dominante, veces = radicados_hallados.most_common(1)[0]
-                contenido_no_corresponde.append((carpeta.name, radicado_exacto, radicado_dominante, veces))
+        else:
+            # Detecta y corrige carpetas que ya tienen contenido pero que
+            # quedaron con TODO metido dentro de una sola subcarpeta con
+            # un numero/nombre viejo o distinto -- herencia de
+            # extracciones o copias de hace tiempo, de antes de que esto
+            # se corrigiera en el momento de extraer. Se revisa siempre,
+            # sin importar VALIDAR_CONTENIDO_CONTRA_NOMBRE.
+            if radicado_actual:
+                hijos_de_primer_nivel = [
+                    h for h in carpeta.iterdir()
+                    if not (h.is_file() and h.name.lower() in ARCHIVOS_A_IGNORAR_AL_CONTAR)
+                ]
+                if len(hijos_de_primer_nivel) == 1 and hijos_de_primer_nivel[0].is_dir():
+                    nombre_subcarpeta_vieja = hijos_de_primer_nivel[0].name
+                    if MODO_PRUEBA:
+                        logging.info(
+                            "[SIMULACION-Anidado historico] '%s' tiene TODO su contenido metido dentro de "
+                            "una sola subcarpeta '%s'; se aplanaria para que quede directo adentro.",
+                            carpeta.name, nombre_subcarpeta_vieja,
+                        )
+                    else:
+                        aplanar_carpeta_anidada_unica(carpeta)
+                        logging.info(
+                            "[Anidado historico] '%s' tenia TODO su contenido metido dentro de una sola "
+                            "subcarpeta vieja '%s'; se aplano para que quede directo adentro.",
+                            carpeta.name, nombre_subcarpeta_vieja,
+                        )
+                        carpetas_aplanadas_historicas.append((carpeta.name, nombre_subcarpeta_vieja))
+
+            if VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
+                radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
+                if radicados_hallados and radicado_exacto not in radicados_hallados:
+                    radicado_dominante, veces = radicados_hallados.most_common(1)[0]
+                    contenido_no_corresponde.append((carpeta.name, radicado_exacto, radicado_dominante, veces))
 
     faltantes = []  # (fila, numero, radicado)
     for fila, numero, radicado in procesos:
@@ -1465,6 +1496,16 @@ def procesar():
                 nombre, zip_nombre, ubicacion, extraidos,
                 f", {fallidos} fallidos" if fallidos else "",
             )
+
+    if carpetas_aplanadas_historicas:
+        logging.info(
+            "[Anidado historico] %d carpeta(s) tenian TODO su contenido metido dentro de una sola "
+            "subcarpeta vieja (herencia de extracciones/copias de antes); se aplanaron para que los "
+            "documentos queden directo adentro:",
+            len(carpetas_aplanadas_historicas),
+        )
+        for nombre, nombre_subcarpeta_vieja in carpetas_aplanadas_historicas:
+            logging.info("   - '%s' (subcarpeta vieja quitada: '%s')", nombre, nombre_subcarpeta_vieja)
 
     if carpetas_vacias:
         logging.warning("[Carpeta vacia] %d carpeta(s) no tienen ningun archivo adentro:", len(carpetas_vacias))
