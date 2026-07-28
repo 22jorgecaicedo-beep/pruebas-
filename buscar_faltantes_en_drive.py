@@ -13,7 +13,12 @@ Para cada proceso faltante, busca por, en este orden:
      no hay riesgo real de confundirlo con otro caso.
   2. El RADICADO CORTO (ej. "2025-00456" o "2025-456", derivado del año
      y el consecutivo del radicado completo).
-  3. El numero de CUENTA.
+  3. El numero de CUENTA (solo si es lo bastante especifica -- ver
+     _cuenta_es_valida_para_buscar: una cuenta vacia, "0", o de muy
+     pocos digitos NO se busca, porque un termino tan generico haria
+     coincidir la busqueda aproximada de Drive con miles de carpetas
+     sin relacion de TODO el Drive, dejando el proceso "pegado" un
+     buen rato revisando falsos positivos uno por uno).
 Las busquedas 2 y 3 son menos confiables (un radicado corto o una cuenta
 se puede repetir o coincidir por casualidad con archivos de otro caso);
 para esos candidatos, antes de descargar se valida ademas que la
@@ -222,6 +227,27 @@ def radicados_cortos(radicado: str):
     formatos = {f"{anio}-{consecutivo_completo}"}
     formatos.add(f"{anio}-{consecutivo_sin_ceros}")
     return sorted(formatos)
+
+
+# Cuantos digitos minimo debe tener una cuenta para buscarla en Drive.
+MIN_DIGITOS_CUENTA_BUSQUEDA = 4
+
+
+def _cuenta_es_valida_para_buscar(cuenta: str) -> bool:
+    """
+    True si 'cuenta' es lo bastante especifica como para buscarla en
+    Drive sin arrastrar miles de falsos positivos. Rechaza vacia, "0"
+    (o cualquier variante de puros ceros), y cuentas muy cortas -- la
+    busqueda aproximada de Drive (ver _nombre_coincide) hace coincidir
+    un termino tan generico con casi CUALQUIER nombre que tenga esos
+    digitos en cualquier parte, lo que puede hacer que la busqueda de
+    un solo proceso revise miles de carpetas sin relacion y se demore
+    muchisimo.
+    """
+    cuenta = (cuenta or "").strip()
+    if not cuenta or cuenta.strip("0") == "":
+        return False
+    return len(cuenta) >= MIN_DIGITOS_CUENTA_BUSQUEDA
 
 
 # ==================== Google Drive ====================
@@ -1270,14 +1296,21 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                 )
 
     if servicio and cuenta:
-        for c in buscar_en_drive(servicio, cuenta):
-            descargar_coincidencia(
-                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, contexto
+        if _cuenta_es_valida_para_buscar(cuenta):
+            for c in buscar_en_drive(servicio, cuenta):
+                descargar_coincidencia(
+                    servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, contexto
+                )
+        else:
+            logging.info(
+                "   (no se busca por cuenta '%s' para el proceso %s: es vacia, cero, o demasiado corta -- "
+                "buscarla traeria miles de falsos positivos de todo Drive)",
+                cuenta, numero,
             )
 
     if credenciales_correo and BUSCAR_EN_CORREO:
         usuario, app_password = credenciales_correo
-        terminos = [radicado] + radicados_cortos(radicado) + ([cuenta] if cuenta else [])
+        terminos = [radicado] + radicados_cortos(radicado) + ([cuenta] if _cuenta_es_valida_para_buscar(cuenta) else [])
         for termino in terminos:
             if not termino:
                 continue

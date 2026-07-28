@@ -354,7 +354,12 @@ por este orden:
    coincidencia exacta, la descarga automático (tan específico que no
    hay riesgo real de confundirlo con otro caso).
 2. El **radicado corto** (ej. `2025-00456` o `2025-456`).
-3. El número de **cuenta**.
+3. El número de **cuenta** -- solo si es lo bastante específica. Una
+   cuenta vacía, `"0"`, o de muy pocos dígitos **no se busca**: como la
+   búsqueda de Drive es aproximada, un término tan genérico coincidiría
+   con miles de carpetas de todo el Drive sin relación, dejando el
+   proceso "pegado" un buen rato revisando falsos positivos uno por
+   uno.
 
 Los casos 2 y 3 son menos confiables (un radicado corto o una cuenta
 puede coincidir por casualidad con archivos de otro proceso); para
