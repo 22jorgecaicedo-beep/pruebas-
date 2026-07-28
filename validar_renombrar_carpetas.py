@@ -573,6 +573,32 @@ def contar_archivos(carpeta: Path) -> int:
         return 0
 
 
+def buscar_donante_en_duplicados(carpeta_duplicados: Path, radicado: str):
+    """
+    Busca dentro de NOMBRE_CARPETA_DUPLICADOS (un solo nivel) una carpeta
+    cuyo radicado EXACTO coincida y que tenga al menos un archivo adentro
+    -- para poder rellenar una carpeta VACIA de la raiz que sea del mismo
+    caso. Si hay mas de una candidata, devuelve la que tenga MAS archivos.
+    Devuelve (carpeta, cantidad_de_archivos), o None si no hay ninguna con
+    contenido.
+    """
+    if not carpeta_duplicados.exists():
+        return None
+    candidatas = []
+    try:
+        for hijo in carpeta_duplicados.iterdir():
+            if hijo.is_dir() and radicado_de_nombre_carpeta(hijo.name) == radicado:
+                archivos = contar_archivos(hijo)
+                if archivos > 0:
+                    candidatas.append((hijo, archivos))
+    except OSError:
+        return None
+    if not candidatas:
+        return None
+    candidatas.sort(key=lambda par: par[1], reverse=True)
+    return candidatas[0]
+
+
 def _texto_de_pdf(ruta: Path) -> str:
     if PdfReader is None:
         return ""
@@ -1200,6 +1226,7 @@ def procesar():
     carpetas_vacias = []       # (nombre, radicado_o_None, zip_encontrado_o_None)
     carpetas_sin_radicado = []  # nombres sin NINGUN radicado reconocible (ni exacto ni cercano)
     contenido_no_corresponde = []  # (nombre, radicado_esperado, radicado_dominante_en_contenido, veces)
+    carpetas_rellenadas_desde_duplicados = []  # (nombre, nombre_donante, archivos_copiados)
 
     carpetas_finales = [d for d in carpeta_raiz.iterdir() if d.is_dir() and d.name not in CARPETAS_A_IGNORAR]
     for carpeta in carpetas_finales:
@@ -1210,12 +1237,42 @@ def procesar():
 
         numero_archivos = contar_archivos(carpeta)
         if numero_archivos == 0:
-            zip_encontrado, zip_ubicacion = None, None
-            if radicado_actual and carpeta_descargas:
-                resultado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
-                if resultado:
-                    zip_encontrado, zip_ubicacion = resultado
-            carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
+            # Antes de darla por vacia, revisa si hay una carpeta con el
+            # MISMO radicado en Duplicados_para_revisar que si tenga
+            # documentos (de una consolidacion anterior) -- si la hay, se
+            # le copian los archivos (nunca se borra el donante, por si
+            # algo sale mal).
+            donante_info = None
+            if radicado_actual:
+                donante_info = buscar_donante_en_duplicados(carpeta_duplicados, radicado_actual)
+
+            if donante_info:
+                donante, archivos_donante = donante_info
+                if MODO_PRUEBA:
+                    logging.info(
+                        "[SIMULACION-Vacia] '%s' esta vacia; se rellenaria con los %d archivo(s) de la "
+                        "carpeta duplicada '%s/%s' (mismo radicado %s).",
+                        carpeta.name, archivos_donante, NOMBRE_CARPETA_DUPLICADOS, donante.name, radicado_actual,
+                    )
+                else:
+                    shutil.copytree(donante, carpeta, dirs_exist_ok=True)
+                    numero_archivos = contar_archivos(carpeta)
+                    logging.info(
+                        "[Vacia-Rellenada] '%s' estaba vacia; se le copiaron los %d archivo(s) de la "
+                        "carpeta duplicada '%s/%s' (mismo radicado %s). Esa copia en %s NO se borro, por "
+                        "seguridad -- borrala a mano cuando confirmes que todo quedo bien.",
+                        carpeta.name, archivos_donante, NOMBRE_CARPETA_DUPLICADOS, donante.name,
+                        radicado_actual, NOMBRE_CARPETA_DUPLICADOS,
+                    )
+                    carpetas_rellenadas_desde_duplicados.append((carpeta.name, donante.name, archivos_donante))
+
+            if numero_archivos == 0:
+                zip_encontrado, zip_ubicacion = None, None
+                if radicado_actual and carpeta_descargas:
+                    resultado = buscar_zip_con_radicado(carpeta_descargas, radicado_actual)
+                    if resultado:
+                        zip_encontrado, zip_ubicacion = resultado
+                carpetas_vacias.append((carpeta.name, radicado_actual, zip_encontrado, zip_ubicacion))
         elif VALIDAR_CONTENIDO_CONTRA_NOMBRE and radicado_exacto:
             radicados_hallados = radicados_encontrados_en_carpeta(carpeta, MAX_ARCHIVOS_CONTENIDO_A_REVISAR)
             if radicados_hallados and radicado_exacto not in radicados_hallados:
@@ -1286,6 +1343,19 @@ def procesar():
         )
         for nombre in carpetas_sin_radicado:
             logging.warning("   - %s", nombre)
+
+    if carpetas_rellenadas_desde_duplicados:
+        logging.info(
+            "[Vacia-Rellenada] %d carpeta(s) estaban vacias y se rellenaron con los documentos de su "
+            "copia duplicada (mismo radicado). Las copias originales NO se borraron, quedaron en '%s' -- "
+            "borralas a mano cuando confirmes que todo quedo bien:",
+            len(carpetas_rellenadas_desde_duplicados), NOMBRE_CARPETA_DUPLICADOS,
+        )
+        for nombre, nombre_donante, archivos in carpetas_rellenadas_desde_duplicados:
+            logging.info(
+                "   - '%s' se relleno con %d archivo(s) de '%s/%s'",
+                nombre, archivos, NOMBRE_CARPETA_DUPLICADOS, nombre_donante,
+            )
 
     if carpetas_vacias:
         logging.warning("[Carpeta vacia] %d carpeta(s) no tienen ningun archivo adentro:", len(carpetas_vacias))
@@ -1451,7 +1521,8 @@ def procesar():
         "%d carpeta(s) anidada(s) del mismo caso resueltas, %d carpeta(s) anidada(s) de otro caso sacadas, "
         "%d sin carpeta en disco, %d carpetas sin proceso en el Excel, %d conflictos de nombre, "
         "%d posibles coincidencias para revisar, %d grupo(s) duplicado(s) sin poder resolver, "
-        "%d carpeta(s) vacia(s), %d carpeta(s) sin nombre reconocible, "
+        "%d carpeta(s) vacia(s) (%d de ellas rellenadas desde Duplicados_para_revisar), "
+        "%d carpeta(s) sin nombre reconocible, "
         "%d carpeta(s) con contenido que no corresponde al nombre.",
         len(renombradas),
         "carpetas simuladas (MODO_PRUEBA activo)" if MODO_PRUEBA else "carpetas renombradas",
@@ -1460,7 +1531,8 @@ def procesar():
         len(laue_movidas), len(laue_ya_en_disco), len(laue_sin_proceso_en_excel),
         len(anidadas_mismo_caso), len(anidadas_otro_caso),
         sin_carpeta_en_disco, len(sin_proceso_en_excel), reporte["conflictos"], len(posibles_coincidencias),
-        len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_sin_radicado),
+        len(duplicados_sin_resolver), len(carpetas_vacias), len(carpetas_rellenadas_desde_duplicados),
+        len(carpetas_sin_radicado),
         len(contenido_no_corresponde),
     )
     if MODO_PRUEBA:
