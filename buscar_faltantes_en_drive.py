@@ -32,6 +32,13 @@ corrida anterior ya lo descargo), se omite por completo sin buscar ni
 descargar nada -- para no crear carpetas "_2" duplicadas si se vuelve a
 correr el script sobre un procesos_faltantes_en_disco.csv desactualizado.
 
+Al empezar, tambien revisa si ya quedaron carpetas "_2", "_3", etc en el
+disco de corridas ANTERIORES a estos filtros (por ejemplo, de antes de
+que existiera la validacion de demandante ESSA) -- revalida cada una:
+si menciona a ESSA, la fusiona dentro de su carpeta principal; si no,
+la mueve a Duplicados_para_revisar (nunca la borra) para que la
+revises. Ver consolidar_duplicados_en_disco().
+
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
 busca la carpeta que lo contiene y descarga esa carpeta completa (no
 solo el archivo), asumiendo que ahi esta el resto del expediente.
@@ -513,6 +520,122 @@ def _carpeta_tiene_demandante_valido(servicio, carpeta) -> bool:
     return False
 
 
+def _carpeta_local_tiene_demandante_valido(carpeta: Path) -> bool:
+    """
+    Version LOCAL (en el disco, no en Drive) de _carpeta_tiene_demandante_valido
+    -- la usa consolidar_duplicados_en_disco() para revalidar carpetas
+    "_2", "_3", etc que quedaron de corridas ANTERIORES a que este
+    filtro existiera.
+    """
+    if any(_nombre_coincide(carpeta.name, t) for t in TERMINOS_DEMANDANTE_VALIDO):
+        return True
+    try:
+        archivos = [h for h in carpeta.rglob("*") if h.is_file()]
+    except OSError:
+        return False
+    if any(_nombre_coincide(a.name, t) for a in archivos for t in TERMINOS_DEMANDANTE_VALIDO):
+        return True
+
+    candidatos_contenido = [a for a in archivos if a.suffix.lower() in EXTENSIONES_CONTENIDO_DRIVE]
+    for archivo in candidatos_contenido[:MAX_ARCHIVOS_CONTENIDO_A_REVISAR]:
+        texto = cruce_excel._texto_de_pdf(archivo) if archivo.suffix.lower() == ".pdf" else cruce_excel._texto_de_docx(archivo)
+        if any(_nombre_coincide(texto, t) for t in TERMINOS_DEMANDANTE_VALIDO):
+            return True
+    return False
+
+
+_PATRON_SUFIJO_DUPLICADO = re.compile(r"_\d+$")
+
+
+def consolidar_duplicados_en_disco():
+    """
+    Antes de buscar nada nuevo, revisa si en CARPETA_PROCESOS ya quedaron
+    carpetas "_2", "_3", etc para un mismo radicado -- rastros de
+    corridas ANTERIORES a que este script fusionara los candidatos
+    validos en una sola carpeta (o a que existiera el filtro de
+    demandante ESSA). Para cada grupo de carpetas que comparten
+    radicado:
+      - la carpeta "principal" (la que NO termina en "_N") se queda
+        como destino de la fusion;
+      - cada carpeta "_N" que SI menciona a ESSA/Electrificadora de
+        Santander (por nombre o contenido, ver
+        _carpeta_local_tiene_demandante_valido) se fusiona dentro de la
+        principal sin perder archivos con nombres repetidos (ver
+        _fusionar_sin_perder_nada);
+      - cada carpeta "_N" que NO pasa esa validacion se mueve, tal
+        cual, a Duplicados_para_revisar (NUNCA se borra) -- probablemente
+        es ruido de otro proceso que compartia cuenta o radicado corto.
+    Respeta MODO_PRUEBA (solo avisa que haria, sin tocar nada).
+    """
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return
+
+    try:
+        hijos = [
+            h for h in carpeta_procesos.iterdir()
+            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+        ]
+    except OSError:
+        return
+
+    grupos = {}
+    for hijo in hijos:
+        radicado = cruce_excel.radicado_de_nombre_carpeta(hijo.name)
+        if radicado:
+            grupos.setdefault(radicado, []).append(hijo)
+
+    consolidados = 0
+    movidos_a_revisar = 0
+    for radicado, carpetas in grupos.items():
+        if len(carpetas) < 2:
+            continue
+        principal = next((c for c in carpetas if not _PATRON_SUFIJO_DUPLICADO.search(c.name)), None)
+        if principal is None:
+            principal = max(carpetas, key=cruce_excel.contar_archivos)
+
+        for carpeta in carpetas:
+            if carpeta == principal:
+                continue
+            valido = _carpeta_local_tiene_demandante_valido(carpeta)
+
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION -- Consolidar] '%s' (radicado %s): %s a ESSA/Electrificadora de Santander -- "
+                    "se %s.",
+                    carpeta.name, radicado, "menciona" if valido else "no se encontro",
+                    f"fusionaria en '{principal.name}'" if valido else f"moveria a {cruce_excel.NOMBRE_CARPETA_DUPLICADOS}",
+                )
+                continue
+
+            if valido:
+                _fusionar_sin_perder_nada(carpeta, principal)
+                consolidados += 1
+                logging.info(
+                    "[Consolidado] '%s' se fusiono dentro de '%s' (radicado %s).",
+                    carpeta.name, principal.name, radicado,
+                )
+            else:
+                carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+                carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+                destino_dup = cruce_excel.ruta_libre(carpeta_duplicados, carpeta.name)
+                shutil.move(str(carpeta), str(destino_dup))
+                movidos_a_revisar += 1
+                logging.info(
+                    "[Revisar] '%s' (radicado %s) no menciona a ESSA/Electrificadora de Santander -- se movio a "
+                    "%s/%s en vez de fusionarla (probablemente es de otro proceso que comparte cuenta/radicado "
+                    "corto).",
+                    carpeta.name, radicado, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, destino_dup.name,
+                )
+
+    if consolidados or movidos_a_revisar:
+        logging.info(
+            "[Consolidar] %d carpeta(s) duplicada(s) de corridas anteriores se fusionaron en su carpeta "
+            "principal, %d se movieron a %s para que las revises.",
+            consolidados, movidos_a_revisar, cruce_excel.NOMBRE_CARPETA_DUPLICADOS,
+        )
+
+
 def _radicado_ya_en_disco(radicado: str) -> bool:
     """
     True si ya existe una carpeta en CARPETA_PROCESOS para este radicado
@@ -814,6 +937,8 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
 
 
 def procesar():
+    consolidar_duplicados_en_disco()
+
     faltantes = leer_faltantes()
     logging.info("Procesos faltantes a buscar: %d", len(faltantes))
 

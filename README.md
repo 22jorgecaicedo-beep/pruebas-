@@ -379,6 +379,16 @@ nada por su cuenta). Si lo que encuentra es un archivo suelto (no una
 carpeta), busca la carpeta que lo contiene y descarga esa carpeta
 completa.
 
+**Limpieza automática de corridas anteriores:** al empezar, el script
+también revisa si ya quedaron carpetas "_2", "_3", etc en el disco de
+corridas viejas (por ejemplo, de antes de que existiera el filtro de
+demandante ESSA). Revalida cada una: si menciona a ESSA (por nombre o
+contenido), la fusiona dentro de su carpeta principal (sin perder
+archivos con nombres repetidos); si no la menciona, la mueve tal cual
+a `Duplicados_para_revisar` -- nunca la borra -- para que la revises a
+mano, porque probablemente es ruido de otro proceso que compartía
+cuenta o radicado corto.
+
 ### Configurar el acceso a Google Drive (una sola vez)
 
 1. Ve a [console.cloud.google.com](https://console.cloud.google.com/) y
