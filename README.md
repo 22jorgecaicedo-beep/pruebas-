@@ -343,6 +343,63 @@ Uso:
    `validar_juzgados_ramajudicial.log` (solo las diferencias y los
    radicados que el portal no encontró).
 
+## Buscar en Google Drive/correo los procesos que faltan en el disco
+
+`buscar_faltantes_en_drive.py` es otra herramienta aparte. Lee
+`procesos_faltantes_en_disco.csv` (lo genera `validar_renombrar_carpetas.py`)
+y busca cada proceso faltante en tu Google Drive y en tu correo de Gmail,
+por este orden:
+
+1. El **radicado completo** de 23 dígitos -- si encuentra una
+   coincidencia exacta, la descarga automático (tan específico que no
+   hay riesgo real de confundirlo con otro caso).
+2. El **radicado corto** (ej. `2025-00456` o `2025-456`).
+3. El número de **cuenta**.
+
+Para los casos 2 y 3 (menos confiables, pueden coincidir con archivos de
+otro proceso por casualidad) **nunca descarga solo** -- te deja la lista
+de candidatos en `faltantes_candidatos_para_revisar.csv` para que
+confirmes cuál es el correcto. Si lo que encuentra es un archivo suelto
+(no una carpeta), busca la carpeta que lo contiene y descarga esa
+carpeta completa.
+
+### Configurar el acceso a Google Drive (una sola vez)
+
+1. Ve a [console.cloud.google.com](https://console.cloud.google.com/) y
+   crea un proyecto nuevo (o usa uno existente) -- es gratis.
+2. En el menú, ve a **APIs y servicios → Biblioteca**, busca **Google
+   Drive API** y dale **Habilitar**.
+3. Ve a **APIs y servicios → Credenciales → Crear credenciales → ID de
+   cliente de OAuth**. Si te pide configurar antes la "pantalla de
+   consentimiento", elige tipo **Externo**, pon cualquier nombre, y
+   agrégate a ti misma como "usuario de prueba" (no hace falta publicarla).
+4. Tipo de aplicación: **Aplicación de escritorio**. Créala y descarga el
+   JSON.
+5. Renombra ese archivo a `credenciales_drive.json` y ponlo en la misma
+   carpeta que los demás scripts.
+6. La primera vez que corras `buscar_faltantes_en_drive.py`, se abre el
+   navegador pidiendo que autorices el acceso con tu cuenta de Google.
+   Acepta, y queda guardado `token_drive.json` para las próximas veces
+   (no hay que repetir esto).
+
+Para que también busque en tu correo, usa el mismo `credenciales_sgde.txt`
+que ya tienes configurado para `procesos_juridicos.py` -- si no existe,
+esa búsqueda simplemente se omite.
+
+Uso:
+
+1. Corre primero `validar_renombrar_carpetas.py` (para que
+   `procesos_faltantes_en_disco.csv` esté al día).
+2. Corre:
+
+   ```
+   python buscar_faltantes_en_drive.py
+   ```
+3. Por defecto corre en `MODO_PRUEBA = True` (solo busca y te dice qué
+   descargaría). Revisa el log y `faltantes_candidatos_para_revisar.csv`,
+   y cuando confíes en el resultado cambia `MODO_PRUEBA = False` para
+   descargar de verdad.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
