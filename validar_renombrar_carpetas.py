@@ -742,14 +742,49 @@ def buscar_zip_con_radicado(carpeta_descargas: Path, radicado: str):
     return None
 
 
+def aplanar_carpeta_anidada_unica(carpeta: Path, maximo_niveles: int = 5) -> None:
+    """
+    Si 'carpeta' termina con un UNICO elemento adentro y ese elemento es a
+    su vez una carpeta (tipico cuando el zip original comprimia una sola
+    carpeta -- por ejemplo al exportar una carpeta de Google Drive -- con
+    un nombre o numero de proceso VIEJO o distinto al de la carpeta real
+    de destino), sube todo lo de esa subcarpeta un nivel y borra la
+    subcarpeta ya vacia. Asi los documentos quedan directo dentro de
+    'carpeta', en vez de metidos en una subcarpeta con un numero
+    equivocado. Repite varias veces por si hay mas de un nivel asi anidado.
+    """
+    for _ in range(maximo_niveles):
+        try:
+            hijos = [
+                h for h in carpeta.iterdir()
+                if not (h.is_file() and h.name.lower() in ARCHIVOS_A_IGNORAR_AL_CONTAR)
+            ]
+        except OSError:
+            return
+        if len(hijos) != 1 or not hijos[0].is_dir():
+            return
+        subcarpeta = hijos[0]
+        for elemento in list(subcarpeta.iterdir()):
+            destino = carpeta / elemento.name
+            if not destino.exists():
+                shutil.move(str(elemento), str(destino))
+        try:
+            subcarpeta.rmdir()
+        except OSError:
+            return
+
+
 def extraer_zip_en_carpeta(ruta_zip: Path, carpeta_destino: Path):
     """
     Extrae 'ruta_zip' directo dentro de 'carpeta_destino' (una carpeta
-    VACIA que ya existe). Tolera archivos individuales corruptos dentro
-    del zip -- si uno falla, lo salta y sigue con el resto, en vez de
-    fallar por completo. NUNCA borra ni mueve el zip original: se puede
-    volver a intentar mas veces si hace falta. Devuelve
-    (archivos_extraidos, archivos_fallidos).
+    VACIA que ya existe). Si el zip trae todo metido dentro de una sola
+    carpeta de primer nivel (tipico de exportar una carpeta de Google
+    Drive, con un nombre o numero de proceso VIEJO o distinto), esa
+    carpeta se "aplana" para que los documentos queden directo dentro de
+    carpeta_destino. Tolera archivos individuales corruptos dentro del
+    zip -- si uno falla, lo salta y sigue con el resto, en vez de fallar
+    por completo. NUNCA borra ni mueve el zip original: se puede volver a
+    intentar mas veces si hace falta. Devuelve (archivos_extraidos, archivos_fallidos).
     """
     extraidos = 0
     fallidos = 0
@@ -762,6 +797,7 @@ def extraer_zip_en_carpeta(ruta_zip: Path, carpeta_destino: Path):
                 extraidos += 1
             except Exception:
                 fallidos += 1
+    aplanar_carpeta_anidada_unica(carpeta_destino)
     return extraidos, fallidos
 
 

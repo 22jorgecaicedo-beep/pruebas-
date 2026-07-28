@@ -159,6 +159,10 @@ PATRONES_RADICADO = [
     r"(?<!\d)\d{23}(?!\d)",
 ]
 EXTENSIONES_A_REVISAR = {".pdf", ".docx"}
+
+# Archivos "basura" que Windows crea solo -- no cuentan al decidir si una
+# carpeta tiene un unico elemento real adentro (ver aplanar_carpeta_anidada_unica).
+ARCHIVOS_A_IGNORAR_AL_CONTAR = {"desktop.ini", "thumbs.db", ".ds_store"}
 ESPERA_ESTABILIDAD_SEGUNDOS = 3
 INTERVALO_CHEQUEO_SEGUNDOS = 1
 MAX_INTENTOS_ESTABILIDAD = 120
@@ -344,6 +348,39 @@ def _ruta_larga_segura(ruta: str) -> str:
     return ruta
 
 
+def aplanar_carpeta_anidada_unica(carpeta, maximo_niveles: int = 5) -> None:
+    """
+    Si 'carpeta' termina con un UNICO elemento adentro y ese elemento es a
+    su vez una carpeta (tipico cuando el zip original comprimia una sola
+    carpeta -- por ejemplo al exportar una carpeta de Google Drive -- con
+    un nombre o numero de proceso VIEJO o distinto al de la carpeta real
+    de destino), sube todo lo de esa subcarpeta un nivel y borra la
+    subcarpeta ya vacia. Asi los documentos quedan directo dentro de
+    'carpeta', en vez de metidos en una subcarpeta con un numero
+    equivocado. Repite varias veces por si hay mas de un nivel asi anidado.
+    """
+    carpeta = Path(carpeta)
+    for _ in range(maximo_niveles):
+        try:
+            hijos = [
+                h for h in carpeta.iterdir()
+                if not (h.is_file() and h.name.lower() in ARCHIVOS_A_IGNORAR_AL_CONTAR)
+            ]
+        except OSError:
+            return
+        if len(hijos) != 1 or not hijos[0].is_dir():
+            return
+        subcarpeta = hijos[0]
+        for elemento in list(subcarpeta.iterdir()):
+            destino = carpeta / elemento.name
+            if not destino.exists():
+                shutil.move(str(elemento), str(destino))
+        try:
+            subcarpeta.rmdir()
+        except OSError:
+            return
+
+
 def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
     """
     Extrae un zip archivo por archivo. Si uno esta protegido con
@@ -399,6 +436,7 @@ def extraer_zip(ruta_zip: str, carpeta_temp: str):
         contador += 1
 
     archivos_extraidos, archivos_fallidos = _extraer_zip_tolerante(ruta_zip, destino_extraccion)
+    aplanar_carpeta_anidada_unica(destino_extraccion)
 
     return destino_extraccion, archivos_extraidos, archivos_fallidos
 
@@ -834,8 +872,10 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
                 "[SGDE] Expediente %s: se extrajeron %d archivo(s) pero %d fallaron (revisa las advertencias de arriba).",
                 expediente, archivos_extraidos, archivos_fallidos,
             )
+        aplanar_carpeta_anidada_unica(destino_final)
     else:
         shutil.move(carpeta_temp, destino_final)
+        aplanar_carpeta_anidada_unica(destino_final)
 
     return destino_final
 
