@@ -575,6 +575,15 @@ def buscar_coincidencia_ultimo_digito(radicado_carpeta: str, procesos):
 ARCHIVOS_A_IGNORAR_AL_CONTAR = {"desktop.ini", "thumbs.db", ".ds_store"}
 
 
+def _ruta_larga_segura(ruta: str) -> str:
+    """En Windows, antepone el prefijo especial para evitar el limite clasico de 260 caracteres por ruta."""
+    if os.name == "nt":
+        ruta_abs = os.path.abspath(ruta)
+        if not ruta_abs.startswith("\\\\?\\"):
+            return "\\\\?\\" + ruta_abs
+    return ruta
+
+
 def contar_archivos(carpeta: Path) -> int:
     """Cuenta cuantos archivos de VERDAD (no basura de Windows, no carpetas) hay dentro de una carpeta, recursivamente."""
     try:
@@ -779,7 +788,15 @@ def aplanar_carpeta_anidada_unica(carpeta: Path, maximo_niveles: int = 5) -> Non
         for elemento in list(subcarpeta.iterdir()):
             destino = carpeta / elemento.name
             if not destino.exists():
-                shutil.move(str(elemento), str(destino))
+                try:
+                    shutil.move(_ruta_larga_segura(str(elemento)), _ruta_larga_segura(str(destino)))
+                except OSError as error:
+                    logging.warning(
+                        "   (no se pudo subir '%s' un nivel al aplanar '%s' -- probablemente la ruta es "
+                        "demasiado larga para Windows, o hay un problema de permisos/antivirus; se omite y se "
+                        "sigue con el resto: %s)",
+                        elemento.name, carpeta, error,
+                    )
         try:
             subcarpeta.rmdir()
         except OSError:

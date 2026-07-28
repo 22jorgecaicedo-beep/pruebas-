@@ -382,7 +382,15 @@ def aplanar_carpeta_anidada_unica(carpeta, maximo_niveles: int = 5) -> None:
         for elemento in list(subcarpeta.iterdir()):
             destino = carpeta / elemento.name
             if not destino.exists():
-                shutil.move(str(elemento), str(destino))
+                try:
+                    shutil.move(_ruta_larga_segura(str(elemento)), _ruta_larga_segura(str(destino)))
+                except OSError as error:
+                    logging.warning(
+                        "   (no se pudo subir '%s' un nivel al aplanar '%s' -- probablemente la ruta es "
+                        "demasiado larga para Windows, o hay un problema de permisos/antivirus; se omite y se "
+                        "sigue con el resto: %s)",
+                        elemento.name, carpeta, error,
+                    )
         try:
             subcarpeta.rmdir()
         except OSError:
