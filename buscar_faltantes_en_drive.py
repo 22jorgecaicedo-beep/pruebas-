@@ -16,10 +16,11 @@ Para cada proceso faltante, busca por, en este orden:
   3. El numero de CUENTA.
 Las busquedas 2 y 3 son menos confiables (un radicado corto o una cuenta
 se puede repetir o coincidir por casualidad con archivos de otro caso),
-asi que para esas el script NUNCA descarga solo -- solo te muestra la
-lista de candidatos encontrados (nombre y enlace) para que revises cual
-es el correcto y lo descargues tu misma, o me digas cual es para que yo
-lo haga.
+pero TAMBIEN se descargan automatico (cada candidato en su propia
+carpeta, sin pisar nada). La diferencia es que quedan marcadas aparte,
+en faltantes_descargados_a_validar.csv, para que confirmes despues cual
+de esas descargas es la correcta y borres a mano las que no correspondan
+(el script nunca borra nada solo).
 
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
 busca la carpeta que lo contiene y descarga esa carpeta completa (no
@@ -84,7 +85,12 @@ DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 BUSCAR_EN_CORREO = True
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "buscar_faltantes_en_drive.log")
-ARCHIVO_REPORTE_CANDIDATOS = os.path.join(os.path.dirname(__file__), "faltantes_candidatos_para_revisar.csv")
+
+# Procesos que se descargaron por una coincidencia MENOS segura
+# (radicado corto, cuenta, o un enlace de correo que no traia el
+# radicado completo) -- se descargan igual, pero quedan marcados aparte
+# aqui para que los confirmes despues.
+ARCHIVO_REPORTE_A_VALIDAR = os.path.join(os.path.dirname(__file__), "faltantes_descargados_a_validar.csv")
 
 # True (por defecto): no descarga nada de verdad, solo busca y muestra
 # que encontraria. False: descarga de verdad las coincidencias claras
@@ -332,70 +338,78 @@ def id_de_enlace_drive(url: str):
 # ==================== Logica principal ====================
 
 
-def descargar_coincidencia_clara(servicio, item, numero: str, radicado: str) -> bool:
-    """Descarga (o simula) la carpeta de 'item' como 'numero. radicado' dentro de CARPETA_PROCESOS. Devuelve True si quedo lista."""
+def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
+                            descargas_a_validar: list) -> bool:
+    """
+    Descarga (o simula) la carpeta de 'item' como 'numero. radicado' (o
+    'numero. radicado_2', etc, si ya se descargo otro candidato para
+    este mismo proceso) dentro de CARPETA_PROCESOS. 'motivo' describe
+    como se encontro (ej. "radicado completo", "radicado corto: 2025-456",
+    "cuenta: 1000111"). Si 'confiable' es False (coincidencia por
+    radicado corto, cuenta, o enlace de correo sin radicado completo),
+    se agrega a 'descargas_a_validar' para el reporte aparte. Devuelve
+    True si quedo lista (o se simulo).
+    """
     carpeta = carpeta_contenedora(servicio, item)
     if not carpeta:
         logging.warning(
-            "[Sin coincidencia clara] Proceso %s (radicado %s): se encontro '%s' pero no se pudo determinar "
-            "su carpeta contenedora en Drive.",
+            "[Sin coincidencia] Proceso %s (radicado %s): se encontro '%s' pero no se pudo determinar su "
+            "carpeta contenedora en Drive.",
             numero, radicado, item.get("name"),
         )
         return False
 
     nombre_destino = f"{numero}. {radicado}"
     destino = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), nombre_destino)
+    etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
     if MODO_PRUEBA:
         logging.info(
-            "[SIMULACION] Proceso %s (radicado %s): se descargaria la carpeta de Drive '%s' (%s) como '%s'.",
-            numero, radicado, carpeta["name"], enlace_de(carpeta), destino.name,
+            "[SIMULACION%s] Proceso %s (radicado %s, %s): se descargaria la carpeta de Drive '%s' (%s) como '%s'.",
+            etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name,
         )
+        if not confiable:
+            descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
         return True
 
     archivos = descargar_carpeta_drive(servicio, carpeta["id"], destino)
     cruce_excel.aplanar_carpeta_anidada_unica(destino)
     logging.info(
-        "[Descargado] Proceso %s (radicado %s): '%s' (%s) -> '%s' (%d archivo(s)).",
-        numero, radicado, carpeta["name"], enlace_de(carpeta), destino.name, archivos,
+        "[Descargado%s] Proceso %s (radicado %s, %s): '%s' (%s) -> '%s' (%d archivo(s)).",
+        etiqueta, numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name, archivos,
     )
+    if not confiable:
+        descargas_a_validar.append((numero, radicado, motivo, carpeta["name"], enlace_de(carpeta), destino.name))
     return True
 
 
-def procesar_faltante(servicio, credenciales_correo, fila, candidatos_reportados: list):
+def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: list):
     numero, cuenta, radicado, juzgado = fila["numero"], fila["cuenta"], fila["radicado"], fila["juzgado"]
 
     if servicio and radicado:
         coincidencias = buscar_en_drive(servicio, radicado)
         carpetas = [c for c in coincidencias if c["mimeType"] == MIME_CARPETA]
         objetivo = carpetas[0] if carpetas else (coincidencias[0] if coincidencias else None)
-        if objetivo and descargar_coincidencia_clara(servicio, objetivo, numero, radicado):
+        if objetivo and descargar_coincidencia(
+            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar
+        ):
             return
 
+    # No hubo coincidencia exacta: se descargan TODOS los candidatos que
+    # aparezcan por radicado corto o cuenta (cada uno en su propia
+    # carpeta, sin pisar nada), pero marcados para validar despues.
     if servicio:
         for corto in radicados_cortos(radicado):
-            coincidencias = buscar_en_drive(servicio, corto)
-            if coincidencias:
-                logging.warning(
-                    "[Revisar] Proceso %s (radicado %s): %d candidato(s) en Drive por radicado corto '%s' -- "
-                    "no se descargan solos, confirmalos:",
-                    numero, radicado, len(coincidencias), corto,
+            for c in buscar_en_drive(servicio, corto):
+                descargar_coincidencia(
+                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar
                 )
-                for c in coincidencias:
-                    logging.warning("   - '%s' -> %s", c["name"], enlace_de(c))
-                    candidatos_reportados.append((numero, radicado, "radicado corto: " + corto, c["name"], enlace_de(c)))
 
     if servicio and cuenta:
-        coincidencias = buscar_en_drive(servicio, cuenta)
-        if coincidencias:
-            logging.warning(
-                "[Revisar] Proceso %s (radicado %s): %d candidato(s) en Drive por cuenta '%s' -- "
-                "no se descargan solos, confirmalos:",
-                numero, radicado, len(coincidencias), cuenta,
+        for c in buscar_en_drive(servicio, cuenta):
+            descargar_coincidencia(
+                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar
             )
-            for c in coincidencias:
-                logging.warning("   - '%s' -> %s", c["name"], enlace_de(c))
-                candidatos_reportados.append((numero, radicado, "cuenta: " + cuenta, c["name"], enlace_de(c)))
 
     if credenciales_correo and BUSCAR_EN_CORREO:
         usuario, app_password = credenciales_correo
@@ -408,6 +422,7 @@ def procesar_faltante(servicio, credenciales_correo, fila, candidatos_reportados
             except Exception as error:
                 logging.error("[Correo] Fallo buscando '%s': %s", termino, error)
                 continue
+            confiable = termino == radicado
             for asunto, enlaces, adjuntos in correos:
                 for enlace in enlaces:
                     id_enlace, _tipo = id_de_enlace_drive(enlace)
@@ -417,28 +432,28 @@ def procesar_faltante(servicio, credenciales_correo, fila, candidatos_reportados
                         except HttpError as error:
                             logging.warning("[Correo] No se pudo abrir el enlace de Drive en '%s': %s", asunto, error)
                             continue
-                        if termino == radicado:
-                            descargar_coincidencia_clara(servicio, item, numero, radicado)
-                        else:
-                            logging.warning(
-                                "[Revisar] Proceso %s (radicado %s): correo '%s' (busqueda '%s') tiene un "
-                                "enlace de Drive -- confirmalo: %s",
-                                numero, radicado, asunto, termino, enlace,
-                            )
-                            candidatos_reportados.append((numero, radicado, "correo: " + termino, asunto, enlace))
-                if adjuntos and termino == radicado:
-                    for nombre_zip, contenido in adjuntos:
-                        _organizar_adjunto_zip(numero, radicado, asunto, nombre_zip, contenido)
+                        descargar_coincidencia(
+                            servicio, item, numero, radicado, f"correo ({termino}): {asunto}", confiable,
+                            descargas_a_validar,
+                        )
+                for nombre_zip, contenido in adjuntos:
+                    _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar)
 
 
-def _organizar_adjunto_zip(numero, radicado, asunto, nombre_zip, contenido: bytes):
+def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
+                            descargas_a_validar: list):
     nombre_destino = f"{numero}. {radicado}"
     destino = cruce_excel.ruta_libre(Path(CARPETA_PROCESOS), nombre_destino)
+    motivo = "radicado completo" if confiable else f"correo ({termino}): {asunto}"
+    etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
+
     if MODO_PRUEBA:
         logging.info(
-            "[SIMULACION] Proceso %s (radicado %s): se extraeria el adjunto '%s' del correo '%s' como '%s'.",
-            numero, radicado, nombre_zip, asunto, destino.name,
+            "[SIMULACION%s] Proceso %s (radicado %s, %s): se extraeria el adjunto '%s' del correo '%s' como '%s'.",
+            etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name,
         )
+        if not confiable:
+            descargas_a_validar.append((numero, radicado, motivo, nombre_zip, "(adjunto de correo)", destino.name))
         return
 
     destino.mkdir(parents=True, exist_ok=True)
@@ -447,10 +462,12 @@ def _organizar_adjunto_zip(numero, radicado, asunto, nombre_zip, contenido: byte
     try:
         extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, destino)
         logging.info(
-            "[Descargado] Proceso %s (radicado %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
-            numero, radicado, nombre_zip, asunto, destino.name, extraidos,
+            "[Descargado%s] Proceso %s (radicado %s, %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
+            etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name, extraidos,
             f", {fallidos} fallidos" if fallidos else "",
         )
+        if not confiable:
+            descargas_a_validar.append((numero, radicado, motivo, nombre_zip, "(adjunto de correo)", destino.name))
     finally:
         ruta_zip_temp.unlink(missing_ok=True)
 
@@ -478,22 +495,23 @@ def procesar():
         logging.error("No hay ni Drive ni correo configurados -- no hay donde buscar. Revisa las credenciales.")
         return
 
-    candidatos_reportados = []
+    descargas_a_validar = []
     for fila in faltantes:
         if not fila["radicado"]:
             continue
-        procesar_faltante(servicio, credenciales_correo, fila, candidatos_reportados)
+        procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar)
 
-    if candidatos_reportados:
-        with open(ARCHIVO_REPORTE_CANDIDATOS, "w", newline="", encoding="utf-8-sig") as f:
+    if descargas_a_validar:
+        with open(ARCHIVO_REPORTE_A_VALIDAR, "w", newline="", encoding="utf-8-sig") as f:
             escritor = csv.writer(f, delimiter=";")
-            escritor.writerow(["No.", "Radicado", "Encontrado por", "Nombre en Drive/correo", "Enlace"])
-            for fila_candidato in candidatos_reportados:
-                escritor.writerow(fila_candidato)
+            escritor.writerow(["No.", "Radicado", "Encontrado por", "Nombre en Drive/correo", "Enlace", "Carpeta descargada"])
+            for fila_descarga in descargas_a_validar:
+                escritor.writerow(fila_descarga)
         logging.info(
-            "[Revisar] %d candidato(s) no se descargaron solos (radicado corto/cuenta/enlace en correo); "
-            "revisalos en %s.",
-            len(candidatos_reportados), ARCHIVO_REPORTE_CANDIDATOS,
+            "[Revisar] %d carpeta(s) se descargaron por una coincidencia MENOS segura (radicado corto/cuenta/"
+            "enlace de correo); confirma cuales son correctas en %s -- las que no correspondan, borralas a "
+            "mano (el script nunca borra nada solo).",
+            len(descargas_a_validar), ARCHIVO_REPORTE_A_VALIDAR,
         )
 
     if MODO_PRUEBA:

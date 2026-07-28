@@ -356,12 +356,15 @@ por este orden:
 2. El **radicado corto** (ej. `2025-00456` o `2025-456`).
 3. El número de **cuenta**.
 
-Para los casos 2 y 3 (menos confiables, pueden coincidir con archivos de
-otro proceso por casualidad) **nunca descarga solo** -- te deja la lista
-de candidatos en `faltantes_candidatos_para_revisar.csv` para que
-confirmes cuál es el correcto. Si lo que encuentra es un archivo suelto
-(no una carpeta), busca la carpeta que lo contiene y descarga esa
-carpeta completa.
+Los casos 2 y 3 son menos confiables (un radicado corto o una cuenta
+puede coincidir por casualidad con archivos de otro proceso), pero
+**también se descargan automático** -- cada candidato en su propia
+carpeta, sin pisar nada. La diferencia es que quedan marcados aparte en
+`faltantes_descargados_a_validar.csv`, para que después confirmes cuál
+descarga es la correcta y borres a mano las que no correspondan (el
+script nunca borra nada por su cuenta). Si lo que encuentra es un
+archivo suelto (no una carpeta), busca la carpeta que lo contiene y
+descarga esa carpeta completa.
 
 ### Configurar el acceso a Google Drive (una sola vez)
 
@@ -396,9 +399,12 @@ Uso:
    python buscar_faltantes_en_drive.py
    ```
 3. Por defecto corre en `MODO_PRUEBA = True` (solo busca y te dice qué
-   descargaría). Revisa el log y `faltantes_candidatos_para_revisar.csv`,
-   y cuando confíes en el resultado cambia `MODO_PRUEBA = False` para
-   descargar de verdad.
+   descargaría). Revisa el log, y cuando confíes en el resultado cambia
+   `MODO_PRUEBA = False` para descargar de verdad. Después de correrlo
+   revisa `faltantes_descargados_a_validar.csv`: son las carpetas que se
+   descargaron por una coincidencia menos segura (radicado corto, cuenta,
+   o un enlace de correo sin el radicado completo) -- confírmalas y
+   borra a mano las que no correspondan.
 
 ## Si algo falla
 
