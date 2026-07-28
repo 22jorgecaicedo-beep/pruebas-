@@ -187,6 +187,17 @@ FILA_ENCABEZADO = 5
 COLUMNA_NO = "No."
 COLUMNA_RADICADO = "RADICADO"
 
+# Columna con el estado procesal (ACTIVO, ACTIVOS CON TITULOS, SUSPENDIDO,
+# REORGANIZACION, etc). Solo se usa para el reporte de "cuantos procesos
+# me hacen falta por agregar al disco", NO para el cruce/renombrado -- si
+# esta columna no existe, ese reporte simplemente se omite.
+COLUMNA_ESTADO = "ESTADO PROCESAL"
+
+# De todos los estados procesales que haya en el Excel, estos son los que
+# te interesa contar/reportar como "procesos que deberian estar en el
+# disco" (los demas estados se ignoran para este reporte en particular).
+ESTADOS_A_CONTAR = ["ACTIVO", "ACTIVOS CON TITULOS", "SUSPENDIDO", "REORGANIZACION"]
+
 # Nombre (etiqueta de volumen) de tu disco duro externo, tal como aparece en
 # "Este equipo" y en Propiedades del disco. El script busca ese disco por
 # su NOMBRE entre todas las unidades conectadas y usa la letra que
@@ -243,6 +254,7 @@ MODO_PRUEBA = True
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_renombrar_carpetas.log")
 ARCHIVO_REPORTE_VACIAS = os.path.join(os.path.dirname(__file__), "carpetas_vacias.csv")
 ARCHIVO_REPORTE_CONTENIDO = os.path.join(os.path.dirname(__file__), "contenido_no_corresponde.csv")
+ARCHIVO_REPORTE_FALTANTES = os.path.join(os.path.dirname(__file__), "procesos_faltantes_en_disco.csv")
 
 # Carpeta donde se mueven (nunca se borran) las copias duplicadas sobrantes.
 NOMBRE_CARPETA_DUPLICADOS = "Duplicados_para_revisar"
@@ -300,6 +312,39 @@ def encontrar_columna(encabezados, nombre_buscado):
     raise ValueError(
         f"No se encontro la columna '{nombre_buscado}' en la fila {FILA_ENCABEZADO} de '{HOJA_EXCEL}'."
     )
+
+
+def leer_estados_por_radicado():
+    """
+    Lee el Excel UNA VEZ MAS, solo para saber el ESTADO PROCESAL (COLUMNA_ESTADO)
+    de cada radicado -- esto es aparte del cruce normal, solo se usa para
+    el reporte de "cuantos procesos me hacen falta por agregar al disco,
+    por estado". Devuelve {radicado: estado} para los radicados de 23
+    digitos que tengan algo en esa columna. Si la columna COLUMNA_ESTADO
+    no existe en el Excel, devuelve un diccionario vacio (el reporte por
+    estado simplemente se omite, sin error).
+    """
+    wb = openpyxl.load_workbook(RUTA_EXCEL, data_only=True)
+    if HOJA_EXCEL not in wb.sheetnames:
+        return {}
+    ws = wb[HOJA_EXCEL]
+    encabezados = [ws.cell(row=FILA_ENCABEZADO, column=c).value for c in range(1, ws.max_column + 1)]
+    try:
+        col_estado = encontrar_columna(encabezados, COLUMNA_ESTADO)
+        col_rad = encontrar_columna(encabezados, COLUMNA_RADICADO)
+    except ValueError:
+        return {}
+
+    estados_por_radicado = {}
+    for fila in range(FILA_ENCABEZADO + 1, ws.max_row + 1):
+        radicado_crudo = ws.cell(row=fila, column=col_rad).value
+        estado_crudo = ws.cell(row=fila, column=col_estado).value
+        if radicado_crudo is None or estado_crudo is None:
+            continue
+        radicado = re.sub(r"[\s\-]", "", str(radicado_crudo).strip())
+        if radicado.isdigit() and len(radicado) == 23:
+            estados_por_radicado[radicado] = str(estado_crudo).strip()
+    return estados_por_radicado
 
 
 def leer_filas_excel(silencioso=False):
@@ -1177,14 +1222,56 @@ def procesar():
                 radicado_dominante, veces = radicados_hallados.most_common(1)[0]
                 contenido_no_corresponde.append((carpeta.name, radicado_exacto, radicado_dominante, veces))
 
-    sin_carpeta_en_disco = 0
+    faltantes = []  # (fila, numero, radicado)
     for fila, numero, radicado in procesos:
         if radicado not in radicados_encontrados_en_disco:
-            sin_carpeta_en_disco += 1
+            faltantes.append((fila, numero, radicado))
             logging.warning(
                 "[Sin carpeta] Proceso %s (fila %s del Excel, radicado %s) no tiene carpeta correspondiente en %s.",
                 numero, fila, radicado, CARPETA_PROCESOS,
             )
+    sin_carpeta_en_disco = len(faltantes)
+
+    # --- Cuantos de los que faltan son ACTIVO / ACTIVOS CON TITULOS /
+    # SUSPENDIDO / REORGANIZACION (ESTADOS_A_CONTAR), para saber cuantos
+    # procesos hay que agregar de verdad al disco. Se lee el Excel aparte
+    # para esto -- si COLUMNA_ESTADO no existe, este reporte se omite. ---
+    estados_por_radicado = leer_estados_por_radicado()
+    if estados_por_radicado and faltantes:
+        conteo_por_estado = {estado: 0 for estado in ESTADOS_A_CONTAR}
+        otros_estados = 0
+        sin_estado = 0
+        faltantes_con_estado = []  # (numero, radicado, estado)
+        for fila, numero, radicado in faltantes:
+            estado = estados_por_radicado.get(radicado)
+            if estado is None:
+                sin_estado += 1
+                estado = "SIN ESTADO EN EL EXCEL"
+            elif estado in conteo_por_estado:
+                conteo_por_estado[estado] += 1
+            else:
+                otros_estados += 1
+            faltantes_con_estado.append((numero, radicado, estado))
+
+        total_a_contar = sum(conteo_por_estado.values())
+        logging.warning(
+            "[Faltan por agregar] De los %d proceso(s) sin carpeta en el disco, %d son de los estados que "
+            "te interesan (%s):",
+            sin_carpeta_en_disco, total_a_contar, ", ".join(ESTADOS_A_CONTAR),
+        )
+        for estado in ESTADOS_A_CONTAR:
+            logging.warning("   - %s: %d", estado, conteo_por_estado[estado])
+        if otros_estados:
+            logging.warning("   - (otros estados no contados aqui): %d", otros_estados)
+        if sin_estado:
+            logging.warning("   - (radicado no encontrado en la columna '%s'): %d", COLUMNA_ESTADO, sin_estado)
+
+        with open(ARCHIVO_REPORTE_FALTANTES, "w", newline="", encoding="utf-8-sig") as f:
+            escritor = csv.writer(f, delimiter=";")
+            escritor.writerow(["No.", "Radicado", "Estado Procesal"])
+            for numero, radicado, estado in faltantes_con_estado:
+                escritor.writerow([numero, radicado, estado])
+        logging.info("[Faltan por agregar] Reporte completo guardado en: %s", ARCHIVO_REPORTE_FALTANTES)
 
     if sin_proceso_en_excel:
         logging.warning("[Sin proceso] %d carpeta(s) con radicado que no aparece en el Excel:", len(sin_proceso_en_excel))
