@@ -357,8 +357,21 @@ por este orden:
 3. El número de **cuenta**.
 
 Los casos 2 y 3 son menos confiables (un radicado corto o una cuenta
-puede coincidir por casualidad con archivos de otro proceso), pero
-**también se descargan automático**. Si para el mismo proceso aparece
+puede coincidir por casualidad con archivos de otro proceso); para
+esos, antes de descargar también se valida que la carpeta (o sus
+archivos) de verdad mencionen ese radicado.
+
+**Regla obligatoria, sin excepción, para TODO lo que se descargue**
+(sea confiable o no, radicado completo o corto, carpeta de Drive o
+adjunto de correo): el documento tiene que mencionar a **ESSA** o
+**ELECTRIFICADORA DE SANTANDER** (como demandante o como demandado --
+por nombre, o abriendo el contenido de sus PDF/DOCX si el nombre no lo
+dice). Si no la menciona, no se descarga -- ni siquiera si el radicado
+coincidió exacto. Un adjunto de correo que no pase esta regla se
+extrae igual, pero a `Duplicados_para_revisar` en vez de a la carpeta
+del proceso (nunca se pierde, solo no se mezcla con el caso).
+
+Los candidatos que sí pasan **también se descargan automático**. Si para el mismo proceso aparece
 MÁS de un candidato válido (ej. el expediente está repartido en varias
 carpetas de Drive -- una con el "poder", otra con el "expediente"),
 todos quedan **fusionados dentro de UNA sola carpeta** en el disco (no

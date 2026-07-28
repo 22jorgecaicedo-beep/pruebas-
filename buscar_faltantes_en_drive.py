@@ -15,14 +15,22 @@ Para cada proceso faltante, busca por, en este orden:
      y el consecutivo del radicado completo).
   3. El numero de CUENTA.
 Las busquedas 2 y 3 son menos confiables (un radicado corto o una cuenta
-se puede repetir o coincidir por casualidad con archivos de otro caso).
-Para esos candidatos, antes de descargar se valida que la carpeta (o
-sus archivos) de verdad mencionen ese radicado, y que el demandante sea
-ESSA/Electrificadora de Santander (por nombre, o abriendo el contenido
-de sus PDF/DOCX si el nombre no lo dice) -- asi una cuenta compartida
-con procesos de OTRO cliente no trae la carpeta equivocada. Los que
-pasan esos filtros TAMBIEN se descargan automatico (cada candidato en
-su propia carpeta, sin pisar nada), pero quedan marcados aparte en
+se puede repetir o coincidir por casualidad con archivos de otro caso);
+para esos candidatos, antes de descargar se valida ademas que la
+carpeta (o sus archivos) de verdad mencionen ese radicado, para que una
+cuenta compartida con procesos de OTRO cliente no traiga la carpeta
+equivocada.
+
+REGLA OBLIGATORIA, sin excepcion (aplica a TODO lo que se vaya a
+descargar, sea confiable o no, radicado completo o corto, carpeta de
+Drive o adjunto de correo): el documento tiene que mencionar a ESSA o
+ELECTRIFICADORA DE SANTANDER (como demandante o como demandado -- por
+nombre, o abriendo el contenido de sus PDF/DOCX si el nombre no lo
+dice). Si no la menciona, NO se descarga, punto -- ni siquiera si el
+radicado coincidio exacto. Los candidatos que si pasan (y que ademas
+vinieron de una busqueda menos confiable) se descargan automatico
+(cada uno en su propia carpeta, sin pisar nada, o fusionados si son
+varios del mismo proceso), pero quedan marcados aparte en
 faltantes_descargados_a_validar.csv, para que confirmes despues cual de
 esas descargas es la correcta y borres a mano las que no correspondan
 (el script nunca borra nada solo).
@@ -75,6 +83,7 @@ import logging
 import os
 import re
 import shutil
+import zipfile
 from email.header import decode_header
 from pathlib import Path
 
@@ -626,6 +635,21 @@ def _carpeta_local_tiene_demandante_valido(carpeta: Path) -> bool:
     return False
 
 
+def _zip_tiene_demandante_valido_por_nombre(contenido: bytes) -> bool:
+    """
+    Revision RAPIDA (solo nombres de archivo dentro del zip, sin
+    extraer nada a disco) para MODO_PRUEBA -- ver TERMINOS_DEMANDANTE_VALIDO.
+    No reemplaza la revision completa (nombre + contenido de PDF/DOCX)
+    que se hace al descargar de verdad.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as zf:
+            nombres = zf.namelist()
+    except Exception:
+        return False
+    return any(_nombre_coincide(Path(n).name, t) for n in nombres for t in TERMINOS_DEMANDANTE_VALIDO)
+
+
 _PATRON_SUFIJO_DUPLICADO = re.compile(r"_\d+$")
 
 
@@ -879,18 +903,18 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
                 carpeta["name"], radicado,
             )
             return False
-        if not confiable and not _archivos_tienen_demandante_valido(servicio, archivos_sueltos):
+        if not _archivos_tienen_demandante_valido(servicio, archivos_sueltos):
             logging.info(
                 "   (se omite '%s': los archivos que mencionan el radicado %s no mencionan a ESSA/"
                 "Electrificadora de Santander -- se evita bajar la carpeta generica completa)",
                 carpeta["name"], radicado,
             )
             return False
-    elif not confiable and not _carpeta_tiene_demandante_valido(servicio, carpeta):
+    elif not _carpeta_tiene_demandante_valido(servicio, carpeta):
         logging.info(
-            "   (se omite '%s': coincide por %s y menciona el radicado %s, pero no se encontro a ESSA/"
-            "Electrificadora de Santander como demandante -- probablemente es de otro proceso del mismo cliente)",
-            carpeta["name"], motivo, radicado,
+            "   (se omite '%s': coincide por %s, pero no se encontro a ESSA/Electrificadora de Santander como "
+            "demandante o demandado -- regla obligatoria, sin excepcion aunque el radicado sea exacto)",
+            carpeta["name"], motivo,
         )
         return False
 
@@ -1050,11 +1074,19 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
 
 def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
                             descargas_a_validar: list, contexto: dict):
-    destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
     motivo = "radicado completo" if confiable else f"correo ({termino}): {asunto}"
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
     if MODO_PRUEBA:
+        if not _zip_tiene_demandante_valido_por_nombre(contenido):
+            logging.info(
+                "   (el adjunto '%s' del correo '%s' no menciona a ESSA/Electrificadora de Santander en los "
+                "nombres de sus archivos -- se confirmara con el contenido cuando MODO_PRUEBA este en False; "
+                "si sigue sin mencionarla, no se descargara -- regla obligatoria)",
+                nombre_zip, asunto,
+            )
+            return
+        destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
         verbo = "se extraeria" if es_el_primero else "se fusionaria (junto con lo ya encontrado)"
         logging.info(
             "[SIMULACION%s] Proceso %s (radicado %s, %s): %s el adjunto '%s' del correo '%s' en '%s'.",
@@ -1064,19 +1096,39 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
             descargas_a_validar.append((numero, radicado, motivo, nombre_zip, "(adjunto de correo)", destino.name))
         return
 
-    ruta_zip_temp = Path(CARPETA_PROCESOS) / f"_tmp_{nombre_zip}"
+    # Se extrae primero a una carpeta TEMPORAL (nunca directo a la
+    # carpeta del proceso) para poder revisar su contenido y confirmar
+    # que de verdad mencione a ESSA/Electrificadora de Santander antes
+    # de agregarlo -- regla obligatoria, sin excepcion.
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    ruta_zip_temp = carpeta_procesos / f"_tmp_{nombre_zip}"
     ruta_zip_temp.write_bytes(contenido)
+    temporal = carpeta_procesos / f"_tmp_extraccion_correo_{Path(nombre_zip).stem}_{id(contenido)}"
     try:
-        if es_el_primero:
-            destino.mkdir(parents=True, exist_ok=True)
-            extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, destino)
-            accion = "Descargado"
-        else:
-            temporal = destino.parent / f"_tmp_extraccion_{Path(nombre_zip).stem}"
-            temporal.mkdir(parents=True, exist_ok=True)
-            extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, temporal)
-            _fusionar_sin_perder_nada(temporal, destino)
-            accion = "Fusionado"
+        extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, temporal)
+        if extraidos == 0:
+            logging.warning(
+                "[Correo] El adjunto '%s' del correo '%s' no dejo ningun archivo al extraerlo -- se omite.",
+                nombre_zip, asunto,
+            )
+            shutil.rmtree(temporal, ignore_errors=True)
+            return
+
+        if not _carpeta_local_tiene_demandante_valido(temporal):
+            logging.info(
+                "   (se omite el adjunto '%s' del correo '%s': no se encontro a ESSA/Electrificadora de "
+                "Santander como demandante o demandado -- regla obligatoria, sin excepcion)",
+                nombre_zip, asunto,
+            )
+            carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+            carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+            destino_dup = cruce_excel.ruta_libre(carpeta_duplicados, f"{numero}. {radicado} - correo {Path(nombre_zip).stem}")
+            shutil.move(str(temporal), str(destino_dup))
+            return
+
+        destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
+        accion = "Descargado" if es_el_primero else "Fusionado"
+        _fusionar_sin_perder_nada(temporal, destino)
         logging.info(
             "[%s%s] Proceso %s (radicado %s, %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
             accion, etiqueta, numero, radicado, motivo, nombre_zip, asunto, destino.name, extraidos,
