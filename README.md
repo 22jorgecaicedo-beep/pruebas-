@@ -391,13 +391,10 @@ esa búsqueda simplemente se omite.
 
 Uso:
 
-1. Corre primero `validar_renombrar_carpetas.py` (para que
-   `procesos_faltantes_en_disco.csv` esté al día).
-2. Corre:
-
-   ```
-   python buscar_faltantes_en_drive.py
-   ```
+1. Corre primero `iniciar.bat` (o `validar_renombrar_carpetas.py`) para
+   que `procesos_faltantes_en_disco.csv` esté al día.
+2. Haz doble clic en `buscar_drive.bat` (o corre `python
+   buscar_faltantes_en_drive.py` desde una terminal en esa carpeta).
 3. Por defecto corre en `MODO_PRUEBA = True` (solo busca y te dice qué
    descargaría). Revisa el log, y cuando confíes en el resultado cambia
    `MODO_PRUEBA = False` para descargar de verdad. Después de correrlo
