@@ -31,6 +31,14 @@ carpeta se deja solo con el radicado como siempre, y mas tarde puedes
 correr validar_renombrar_carpetas.py para completar el nombre cuando el
 informe ya lo tenga.
 
+Si el caso YA tiene una carpeta en el disco (por ejemplo porque te vuelven
+a compartir el mismo expediente, o descargas de nuevo un zip que ya habias
+procesado), los archivos nuevos se AGREGAN a esa misma carpeta en vez de
+crear una carpeta separada con "_2": si un archivo con el mismo nombre ya
+existia, se reemplaza por el nuevo (se asume que la descarga mas reciente
+es la vigente); si no existia, se agrega. Nunca se borra nada que ya
+estuviera ahi y no venga en la descarga nueva.
+
 Antes de usarla, edita la seccion CONFIGURACION mas abajo y crea
 `credenciales_sgde.txt` (ver credenciales_sgde.example.txt) con tu correo
 y una Contrasena de aplicacion de Gmail.
@@ -381,6 +389,33 @@ def aplanar_carpeta_anidada_unica(carpeta, maximo_niveles: int = 5) -> None:
             return
 
 
+def fusionar_carpeta_en_destino(origen, destino) -> int:
+    """
+    Copia TODO el contenido de 'origen' (una carpeta recien extraida,
+    temporal) DENTRO de 'destino' (una carpeta que YA EXISTE para este
+    mismo caso), en vez de crear una carpeta separada con "_2". Archivo
+    por archivo: si ya existe uno con el mismo nombre/ruta relativa en
+    destino, se REEMPLAZA por el que se acaba de descargar (se asume
+    que la descarga mas reciente es la vigente); si no existe, se
+    agrega. NUNCA borra archivos que ya estuvieran en destino y no
+    vengan en 'origen'. Al terminar, borra 'origen' (era temporal, ya
+    quedo todo copiado). Devuelve cuantos archivos se copiaron en total.
+    """
+    origen = Path(origen)
+    destino = Path(destino)
+    copiados = 0
+    for ruta in origen.rglob("*"):
+        if ruta.is_dir():
+            continue
+        relativo = ruta.relative_to(origen)
+        destino_archivo = destino / relativo
+        destino_archivo.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(ruta), str(destino_archivo))
+        copiados += 1
+    shutil.rmtree(str(origen), ignore_errors=True)
+    return copiados
+
+
 def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
     """
     Extrae un zip archivo por archivo. Si uno esta protegido con
@@ -556,9 +591,16 @@ def procesar_zip_manual(ruta_zip: str):
         nombre_final = sanear_nombre(Path(ruta_zip).stem)
         logging.warning("[Manual] No se encontro radicado en %s (ni en el nombre ni en el contenido). Se usara: %s", nombre_zip, nombre_final)
 
-    destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
-    shutil.move(carpeta_extraida, destino_final)
-    logging.info("[Manual] Proceso organizado en: %s (%d archivo(s))", destino_final, archivos_extraidos)
+    destino_final = os.path.join(CARPETA_DESTINO, nombre_final)
+    if os.path.exists(destino_final):
+        copiados = fusionar_carpeta_en_destino(carpeta_extraida, destino_final)
+        logging.info(
+            "[Manual] '%s' ya tenia carpeta; se agregaron/reemplazaron %d archivo(s) en: %s",
+            nombre_final, copiados, destino_final,
+        )
+    else:
+        shutil.move(carpeta_extraida, destino_final)
+        logging.info("[Manual] Proceso organizado en: %s (%d archivo(s))", destino_final, archivos_extraidos)
 
     mover_zip_a_procesados(ruta_zip)
 
@@ -854,14 +896,19 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
         (caso de carpetas sin flecha).
     """
     nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(expediente))
-    destino_final = ruta_destino_disponible(CARPETA_DESTINO, nombre_final)
+    destino_final = os.path.join(CARPETA_DESTINO, nombre_final)
+    ya_existia = os.path.exists(destino_final)
     contenidos = os.listdir(carpeta_temp)
 
     if len(contenidos) == 1 and contenidos[0].lower().endswith(".zip"):
         ruta_zip = os.path.join(carpeta_temp, contenidos[0])
+        # Si destino_final ya existe, extraer directo ahi mismo fusiona
+        # solo: los archivos con el mismo nombre se reemplazan, los
+        # nuevos se agregan, y nada de lo que ya habia se borra.
         archivos_extraidos, archivos_fallidos = _extraer_zip_tolerante(ruta_zip, destino_final)
         if archivos_extraidos == 0:
-            shutil.rmtree(destino_final, ignore_errors=True)
+            if not ya_existia:
+                shutil.rmtree(destino_final, ignore_errors=True)
             raise RuntimeError(
                 f"El zip del expediente {expediente} no dejo NINGUN archivo al extraerlo (revisa arriba en el "
                 "log si salio 'protegido con contrasena', 'ruta muy larga', o si el antivirus lo puso en "
@@ -873,6 +920,17 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
                 expediente, archivos_extraidos, archivos_fallidos,
             )
         aplanar_carpeta_anidada_unica(destino_final)
+        if ya_existia:
+            logging.info(
+                "[SGDE] Expediente %s ya tenia carpeta; se agregaron/reemplazaron sus archivos en: %s",
+                expediente, destino_final,
+            )
+    elif ya_existia:
+        copiados = fusionar_carpeta_en_destino(carpeta_temp, destino_final)
+        logging.info(
+            "[SGDE] Expediente %s ya tenia carpeta; se agregaron/reemplazaron %d archivo(s) en: %s",
+            expediente, copiados, destino_final,
+        )
     else:
         shutil.move(carpeta_temp, destino_final)
         aplanar_carpeta_anidada_unica(destino_final)
