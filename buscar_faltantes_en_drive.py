@@ -97,6 +97,14 @@ ARCHIVO_REPORTE_A_VALIDAR = os.path.join(os.path.dirname(__file__), "faltantes_d
 # (radicado completo).
 MODO_PRUEBA = True
 
+# Si una busqueda por radicado corto o cuenta (las menos confiables)
+# trae MAS candidatos que este numero, se considera demasiado ruidosa
+# para descargar automatico (tipico de un numero de cuenta que se
+# repite en documentos de muchos procesos distintos a lo largo de los
+# años) -- en vez de descargar todos, se omiten y solo se avisa la
+# cantidad encontrada, para que la revises a mano si quieres.
+MAX_CANDIDATOS_POR_BUSQUEDA = 5
+
 MIME_CARPETA = "application/vnd.google-apps.folder"
 MIME_EXPORTAR = {
     "application/vnd.google-apps.document": (".pdf", "application/pdf"),
@@ -380,6 +388,26 @@ def id_de_enlace_drive(url: str):
 # ==================== Logica principal ====================
 
 
+def _demasiados_candidatos(coincidencias: list, numero: str, radicado: str, motivo: str) -> bool:
+    """
+    Si 'coincidencias' trae mas de MAX_CANDIDATOS_POR_BUSQUEDA resultados,
+    la busqueda (radicado corto o cuenta) es demasiado generica para
+    confiar en descargar todos los candidatos -- tipico de una cuenta
+    que se repite en documentos de muchos procesos distintos a lo largo
+    de los años. En ese caso no se descarga NADA de esta busqueda, solo
+    se avisa la cantidad para que se revise a mano. Devuelve True si se
+    debe omitir (demasiados candidatos).
+    """
+    if len(coincidencias) <= MAX_CANDIDATOS_POR_BUSQUEDA:
+        return False
+    logging.warning(
+        "[Revisar] Proceso %s (radicado %s, %s): %d candidatos encontrados -- demasiados para descargar "
+        "automatico (mas de %d), se omiten todos. Busca a mano en Drive con este termino si quieres revisarlos.",
+        numero, radicado, motivo, len(coincidencias), MAX_CANDIDATOS_POR_BUSQUEDA,
+    )
+    return True
+
+
 def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
                             descargas_a_validar: list, ya_descargados: set) -> bool:
     """
@@ -460,19 +488,26 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
 
     # No hubo coincidencia exacta: se descargan TODOS los candidatos que
     # aparezcan por radicado corto o cuenta (cada uno en su propia
-    # carpeta, sin pisar nada), pero marcados para validar despues.
+    # carpeta, sin pisar nada), pero marcados para validar despues --
+    # salvo que la busqueda traiga demasiados candidatos (ver
+    # _demasiados_candidatos), en cuyo caso se omite por completo.
     if servicio:
         for corto in radicados_cortos(radicado):
-            for c in buscar_en_drive(servicio, corto):
+            coincidencias = buscar_en_drive(servicio, corto)
+            if _demasiados_candidatos(coincidencias, numero, radicado, f"radicado corto: {corto}"):
+                continue
+            for c in coincidencias:
                 descargar_coincidencia(
                     servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, ya_descargados
                 )
 
     if servicio and cuenta:
-        for c in buscar_en_drive(servicio, cuenta):
-            descargar_coincidencia(
-                servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
-            )
+        coincidencias = buscar_en_drive(servicio, cuenta)
+        if not _demasiados_candidatos(coincidencias, numero, radicado, f"cuenta: {cuenta}"):
+            for c in coincidencias:
+                descargar_coincidencia(
+                    servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, ya_descargados
+                )
 
     if credenciales_correo and BUSCAR_EN_CORREO:
         usuario, app_password = credenciales_correo
