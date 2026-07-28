@@ -181,8 +181,22 @@ def autenticar_drive():
     return build("drive", "v3", credentials=creds)
 
 
+def _nombre_coincide(nombre: str, termino: str) -> bool:
+    """
+    Confirma que 'termino' de verdad aparezca (como texto, sin importar
+    mayus/minus) dentro de 'nombre'. Hace falta porque el operador
+    "contains" de Google Drive NO busca el texto exacto -- hace
+    coincidencia por PREFIJOS DE PALABRA (ej. buscar "2014-26" tambien
+    trae carpetas como "26 JULIO" o "26 ENERO", porque alguna palabra
+    del nombre empieza por "26"). Sin este filtro, un termino corto
+    (radicado corto o cuenta) trae una cantidad enorme de falsos
+    positivos de toda la unidad de Drive, sin relacion con el caso.
+    """
+    return termino.lower() in (nombre or "").lower()
+
+
 def buscar_en_drive(servicio, termino: str):
-    """Busca en Drive archivos/carpetas cuyo NOMBRE contenga 'termino'. Devuelve [{id, name, mimeType, parents}, ...]."""
+    """Busca en Drive archivos/carpetas cuyo NOMBRE contenga 'termino' DE VERDAD (ver _nombre_coincide). Devuelve [{id, name, mimeType, parents}, ...]."""
     termino_escapado = termino.replace("\\", "\\\\").replace("'", "\\'")
     consulta = f"name contains '{termino_escapado}' and trashed = false"
     resultados = []
@@ -197,20 +211,48 @@ def buscar_en_drive(servicio, termino: str):
         page_token = respuesta.get("nextPageToken")
         if not page_token:
             break
-    return resultados
+    # Drive ya devolvio algunos falsos positivos por su busqueda
+    # aproximada (ver _nombre_coincide) -- se filtran aca antes de
+    # devolverlos, para no procesarlos/descargarlos mas adelante.
+    return [item for item in resultados if _nombre_coincide(item["name"], termino)]
+
+
+_ID_RAIZ_DRIVE = {}  # cache por servicio: id(servicio) -> id de la carpeta raiz ("Mi unidad")
+
+
+def _id_raiz_drive(servicio):
+    clave = id(servicio)
+    if clave not in _ID_RAIZ_DRIVE:
+        _ID_RAIZ_DRIVE[clave] = servicio.files().get(fileId="root", fields="id").execute()["id"]
+    return _ID_RAIZ_DRIVE[clave]
 
 
 def carpeta_contenedora(servicio, item):
-    """Si 'item' ya es una carpeta, la devuelve tal cual; si es un archivo suelto, busca y devuelve SU carpeta contenedora."""
+    """
+    Si 'item' ya es una carpeta, la devuelve tal cual; si es un archivo
+    suelto, busca y devuelve SU carpeta contenedora. Si el archivo esta
+    directo en la raiz de Drive (sin ninguna carpeta contenedora real),
+    devuelve None -- NUNCA se debe tratar "Mi unidad" (la raiz completa
+    de Drive) como si fuera la carpeta de un caso, o se intentaria
+    descargar TODO el Drive.
+    """
     if item.get("mimeType") == MIME_CARPETA:
         return item
     padres = item.get("parents") or []
     if not padres:
         return None
     try:
-        return servicio.files().get(fileId=padres[0], fields="id, name, mimeType, parents").execute()
+        carpeta = servicio.files().get(fileId=padres[0], fields="id, name, mimeType, parents").execute()
     except HttpError:
         return None
+    if carpeta.get("id") == _id_raiz_drive(servicio):
+        logging.warning(
+            "   (se omite '%s': esta directo en la raiz de tu Drive, sin una carpeta de caso real que "
+            "la contenga -- nunca se descarga 'Mi unidad' completa)",
+            item.get("name"),
+        )
+        return None
+    return carpeta
 
 
 def _descargar_archivo_binario(servicio, file_id: str, ruta_local: Path):
