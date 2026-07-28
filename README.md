@@ -364,8 +364,13 @@ carpetas de Drive -- una con el "poder", otra con el "expediente"),
 todos quedan **fusionados dentro de UNA sola carpeta** en el disco (no
 se crean "_2", "_3", etc): el primer candidato crea la carpeta, y cada
 candidato siguiente que también pase las validaciones se copia dentro
-de esa misma carpeta (si hay un archivo con el mismo nombre, se
-reemplaza por el más reciente; nunca se borra nada que ya estuviera).
+de esa misma carpeta. Como cada candidato es una carpeta de Drive
+DISTINTA, puede traer -- por pura coincidencia -- un archivo o
+subcarpeta con el mismo nombre que otro candidato (ej. dos carpetas
+"PRINCIPAL" de dos procesos distintos, o dos archivos "01. INFORME 1")
+sin ser el mismo documento; en ese caso **nunca se reemplaza uno con el
+otro** -- el que llega se guarda con un sufijo (ej. "PRINCIPAL_2") para
+quedarse con ambos, y nunca se borra nada que ya estuviera.
 La diferencia con el caso 1 es que estos quedan marcados aparte en
 `faltantes_descargados_a_validar.csv` (una fila por cada candidato que
 se fusionó), para que después confirmes que todo corresponde al mismo

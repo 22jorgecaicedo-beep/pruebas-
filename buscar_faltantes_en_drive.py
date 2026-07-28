@@ -59,6 +59,7 @@ import io
 import logging
 import os
 import re
+import shutil
 from email.header import decode_header
 from pathlib import Path
 
@@ -532,6 +533,58 @@ def _radicado_ya_en_disco(radicado: str) -> bool:
     return False
 
 
+def _ruta_archivo_libre(carpeta_padre: Path, nombre_archivo: str) -> Path:
+    """Como ruta_libre, pero respetando la EXTENSION del archivo (ej. "informe_2.pdf", no "informe.pdf_2")."""
+    ruta = carpeta_padre / nombre_archivo
+    if not ruta.exists():
+        return ruta
+    base = Path(nombre_archivo).stem
+    extension = Path(nombre_archivo).suffix
+    contador = 2
+    while True:
+        candidato = carpeta_padre / f"{base}_{contador}{extension}"
+        if not candidato.exists():
+            return candidato
+        contador += 1
+
+
+def _fusionar_sin_perder_nada(origen, destino) -> int:
+    """
+    Copia TODO el contenido de 'origen' (carpeta temporal recien
+    descargada de OTRO candidato de Drive, distinto del primero, para
+    este mismo proceso) DENTRO de 'destino' (donde ya quedo el primer
+    candidato) -- pero SIN reemplazar nunca un archivo que ya exista.
+
+    A diferencia de organizador.fusionar_carpeta_en_destino (pensada
+    para cuando se vuelve a procesar el MISMO caso/zip actualizado, y
+    ahi si tiene sentido que el archivo mas reciente reemplace al
+    viejo), aca cada candidato es una carpeta de Drive DISTINTA -- dos
+    candidatos distintos pueden traer, por pura coincidencia, un
+    archivo o subcarpeta con el mismo nombre (ej. dos "PRINCIPAL", o
+    dos "01. INFORME 1") sin ser el mismo documento. Si se reemplazara
+    en ese caso, se perderia contenido real. En vez de eso, si el
+    nombre ya existe, el archivo que llega se guarda con un sufijo
+    libre (ver _ruta_archivo_libre) para quedarse con AMBOS. Al
+    terminar, borra 'origen' (era temporal). Devuelve cuantos archivos
+    se copiaron.
+    """
+    origen = Path(origen)
+    destino = Path(destino)
+    copiados = 0
+    for ruta in sorted(origen.rglob("*")):
+        if ruta.is_dir():
+            continue
+        relativo = ruta.relative_to(origen)
+        destino_archivo = destino / relativo
+        destino_archivo.parent.mkdir(parents=True, exist_ok=True)
+        if destino_archivo.exists():
+            destino_archivo = _ruta_archivo_libre(destino_archivo.parent, destino_archivo.name)
+        shutil.copy2(str(ruta), str(destino_archivo))
+        copiados += 1
+    shutil.rmtree(str(origen), ignore_errors=True)
+    return copiados
+
+
 def _destino_compartido(numero: str, radicado: str, contexto: dict):
     """
     Devuelve la carpeta de destino asignada a ESTE proceso en esta
@@ -631,7 +684,7 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
         temporal = destino.parent / f"_tmp_fusion_{carpeta['id']}"
         archivos = descargar_carpeta_drive(servicio, carpeta["id"], temporal)
         cruce_excel.aplanar_carpeta_anidada_unica(temporal)
-        organizador.fusionar_carpeta_en_destino(temporal, destino)
+        _fusionar_sin_perder_nada(temporal, destino)
         accion = "Fusionado"
     logging.info(
         "[%s%s] Proceso %s (radicado %s, %s): '%s' (%s) -> '%s' (%d archivo(s)).",
@@ -747,7 +800,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
             temporal = destino.parent / f"_tmp_extraccion_{Path(nombre_zip).stem}"
             temporal.mkdir(parents=True, exist_ok=True)
             extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, temporal)
-            organizador.fusionar_carpeta_en_destino(temporal, destino)
+            _fusionar_sin_perder_nada(temporal, destino)
             accion = "Fusionado"
         logging.info(
             "[%s%s] Proceso %s (radicado %s, %s): adjunto '%s' del correo '%s' -> '%s' (%d archivo(s)%s).",
