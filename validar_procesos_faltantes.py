@@ -4,9 +4,19 @@ de faltantes (procesos_faltantes_en_disco.csv, la genera
 validar_renombrar_carpetas.py) -- de los que YA tengan carpeta en el
 disco (por ejemplo porque buscar_faltantes_en_drive.py ya los bajo).
 
+Ademas de procesos_faltantes_en_disco.csv, tambien cruza contra
+carpetas_vacias.csv (el otro reporte que genera
+validar_renombrar_carpetas.py): si una carpeta de la lista de
+faltantes ya existe en el disco pero esta COMPLETAMENTE VACIA (sin
+ningun archivo adentro), se avisa aparte con claridad -- incluyendo si
+ese reporte ya habia encontrado un .zip pendiente en Descargas para
+ella -- en vez de tratarla en silencio como si tuviera contenido para
+ordenar/revisar. Una carpeta vacia no se toca (no hay nada que ordenar
+ni que borrar en ella).
+
 Por defecto (BORRAR_ARCHIVOS_DE_OTRO_PROCESO = False), lo UNICO que
-hace es ordenar cronologicamente los documentos que YA estan adentro
-de cada carpeta de la lista, numerandolos "1. ", "2. ", etc (el mas
+hace con las carpetas que SI tienen contenido es ordenarlas
+cronologicamente, numerando sus documentos "1. ", "2. ", etc (el mas
 viejo primero; ver ordenar_y_enumerar_carpeta) -- no mueve NADA entre
 carpetas, no fusiona nada, no toca ninguna otra carpeta del disco.
 
@@ -47,6 +57,7 @@ Respeta MODO_PRUEBA (por defecto True): en modo prueba solo simula y
 te dice que haria, sin borrar, mover ni renombrar nada todavia.
 """
 
+import csv
 import logging
 import os
 from pathlib import Path
@@ -102,6 +113,32 @@ def _mapa_carpetas_por_radicado():
         if radicado:
             mapa[radicado] = h
     return mapa
+
+
+def _leer_carpetas_vacias():
+    """
+    Lee carpetas_vacias.csv (lo genera validar_renombrar_carpetas.py --
+    columnas "Carpeta;Radicado;Zip pendiente encontrado;Donde se
+    encontro"). Devuelve {radicado: {"zip_encontrado":.., "zip_ubicacion":..}}.
+    Si el archivo no existe (por ejemplo porque no hay ninguna carpeta
+    vacia todavia), devuelve un diccionario vacio sin error.
+    """
+    ruta = cruce_excel.ARCHIVO_REPORTE_VACIAS
+    if not ruta or not os.path.exists(ruta):
+        return {}
+    datos = {}
+    try:
+        with open(ruta, encoding="utf-8-sig") as f:
+            for fila in csv.DictReader(f, delimiter=";"):
+                radicado = (fila.get("Radicado") or "").strip()
+                if radicado:
+                    datos[radicado] = {
+                        "zip_encontrado": (fila.get("Zip pendiente encontrado") or "").strip(),
+                        "zip_ubicacion": (fila.get("Donde se encontro") or "").strip(),
+                    }
+    except OSError:
+        return {}
+    return datos
 
 
 def _motivo_archivo_de_otro_proceso(archivo, cortos_propios, demandado_esperado):
@@ -211,6 +248,45 @@ def procesar():
 
     if not carpetas_objetivo:
         logging.info("No hay ninguna carpeta de la lista de faltantes para validar todavia.")
+        return
+
+    # --- Cruce con carpetas_vacias.csv: una carpeta que ya existe pero
+    # esta COMPLETAMENTE VACIA no tiene nada que ordenar ni que
+    # revisar/borrar -- se avisa aparte, en vez de tratarla en silencio
+    # como si tuviera contenido. --------------------------------------------
+    carpetas_con_contenido = []
+    carpetas_vacias_objetivo = []
+    for carpeta in carpetas_objetivo:
+        if cruce_excel.contar_archivos(carpeta) == 0:
+            carpetas_vacias_objetivo.append(carpeta)
+        else:
+            carpetas_con_contenido.append(carpeta)
+
+    if carpetas_vacias_objetivo:
+        info_vacias = _leer_carpetas_vacias()
+        logging.warning(
+            "%d de esas carpetas estan COMPLETAMENTE VACIAS (sin ningun archivo adentro) -- no hay nada que "
+            "ordenar ni revisar en ellas todavia:",
+            len(carpetas_vacias_objetivo),
+        )
+        for carpeta in carpetas_vacias_objetivo:
+            radicado = cruce_excel.radicado_de_nombre_carpeta(carpeta.name)
+            datos = info_vacias.get(radicado)
+            if datos and datos.get("zip_encontrado"):
+                logging.warning(
+                    "   - '%s': VACIA -- carpetas_vacias.csv encontro un zip pendiente ('%s', en %s); corre "
+                    "validar_renombrar_carpetas.py de nuevo (o extraelo a mano) para llenarla.",
+                    carpeta.name, datos["zip_encontrado"], datos["zip_ubicacion"],
+                )
+            else:
+                logging.warning(
+                    "   - '%s': VACIA -- no hay ningun zip pendiente detectado en Descargas.",
+                    carpeta.name,
+                )
+
+    carpetas_objetivo = carpetas_con_contenido
+    if not carpetas_objetivo:
+        logging.info("Ninguna de las carpetas de la lista tiene contenido para ordenar/revisar todavia.")
         return
 
     if BORRAR_ARCHIVOS_DE_OTRO_PROCESO:

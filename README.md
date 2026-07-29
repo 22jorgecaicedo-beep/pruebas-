@@ -608,7 +608,18 @@ están en `procesos_faltantes_en_disco.csv` (los que ya bajó
 `buscar_faltantes_en_drive.py`, u otros que hayas agregado a mano) --
 sin esperar a que se revise el disco completo.
 
-Para cada proceso de esa lista que **ya tenga carpeta** en el disco:
+Además de `procesos_faltantes_en_disco.csv`, también cruza contra
+`carpetas_vacias.csv` (el otro reporte que genera
+`validar_renombrar_carpetas.py`): si una carpeta de la lista ya existe
+en el disco pero está **completamente vacía** (sin ningún archivo
+adentro), se avisa aparte con claridad -- incluyendo si ese reporte ya
+había encontrado un `.zip` pendiente en Descargas para ella -- en vez
+de tratarla en silencio como si tuviera contenido para ordenar. Una
+carpeta vacía **no se toca** (no hay nada que ordenar ni que borrar en
+ella).
+
+Para cada proceso de esa lista que **ya tenga carpeta con contenido**
+en el disco:
 
 **Por defecto** (`BORRAR_ARCHIVOS_DE_OTRO_PROCESO = False`), lo
 **único** que hace es **ordenar cronológicamente** los documentos que
