@@ -486,7 +486,13 @@ contenido), la fusiona dentro de su carpeta principal (sin perder
 archivos con nombres repetidos); si no la menciona, la mueve tal cual
 a `Duplicados_para_revisar` -- nunca la borra -- para que la revises a
 mano, porque probablemente es ruido de otro proceso que compartía
-cuenta o radicado corto.
+cuenta o radicado corto. **Importante:** esto solo aplica cuando de
+verdad hay una carpeta vieja con sufijo `"_N"` -- si el mismo radicado
+aparece con **dos o más números de proceso distintos y legítimos**
+(porque el Excel tiene ese radicado repetido con varios números, y
+`validar_renombrar_carpetas.py` a propósito dejó una carpeta separada
+por cada uno), esas carpetas **no se tocan ni se fusionan entre sí**:
+fusionarlas destruiría esa separación intencional.
 
 **Revisión de contaminación entre procesos:** también al empezar,
 revisa TODAS las carpetas ya descargadas (de cualquier corrida,

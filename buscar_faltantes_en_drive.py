@@ -1043,7 +1043,7 @@ def consolidar_duplicados_en_disco():
     corridas ANTERIORES a que este script fusionara los candidatos
     validos en una sola carpeta (o a que existiera el filtro de
     demandante ESSA). Para cada grupo de carpetas que comparten
-    radicado:
+    radicado Y tiene ADEMAS al menos una carpeta con sufijo "_N":
       - la carpeta "principal" (la que NO termina en "_N") se queda
         como destino de la fusion;
       - cada carpeta "_N" que SI menciona a ESSA/Electrificadora de
@@ -1054,6 +1054,16 @@ def consolidar_duplicados_en_disco():
       - cada carpeta "_N" que NO pasa esa validacion se mueve, tal
         cual, a Duplicados_para_revisar (NUNCA se borra) -- probablemente
         es ruido de otro proceso que compartia cuenta o radicado corto.
+
+    IMPORTANTE: si NINGUNA carpeta del grupo tiene sufijo "_N" (son
+    todas "numero. radicado" con numeros de proceso DISTINTOS y
+    legitimos), o hay MAS DE UNA carpeta sin sufijo, el grupo NO se
+    toca -- eso no es un duplicado accidental, es el mismo radicado
+    repetido con varios numeros de proceso en el Excel (ver
+    "[Duplicado en Excel]" en validar_renombrar_carpetas.py, que a
+    proposito deja una carpeta separada por cada numero); fusionarlas
+    destruiria esa separacion intencional.
+
     Respeta MODO_PRUEBA (solo avisa que haria, sin tocar nada).
     """
     carpeta_procesos = Path(CARPETA_PROCESOS)
@@ -1079,11 +1089,32 @@ def consolidar_duplicados_en_disco():
     for radicado, carpetas in grupos.items():
         if len(carpetas) < 2:
             continue
-        principal = next((c for c in carpetas if not _PATRON_SUFIJO_DUPLICADO.search(c.name)), None)
-        if principal is None:
-            principal = max(carpetas, key=cruce_excel.contar_archivos)
 
-        for carpeta in carpetas:
+        con_sufijo = [c for c in carpetas if _PATRON_SUFIJO_DUPLICADO.search(c.name)]
+        sin_sufijo = [c for c in carpetas if c not in con_sufijo]
+
+        if not con_sufijo:
+            # NINGUNA carpeta del grupo tiene el sufijo "_N" tipico de
+            # un duplicado viejo -- son carpetas con NUMEROS DE PROCESO
+            # legitimos y DISTINTOS para el mismo radicado (el Excel
+            # tiene ese radicado repetido con varios numeros -- ver
+            # "[Duplicado en Excel]" en validar_renombrar_carpetas.py,
+            # que a proposito crea una carpeta separada POR CADA
+            # numero). No es el caso que esta funcion debe resolver:
+            # fusionarlas destruiria esa separacion a proposito.
+            continue
+
+        if len(sin_sufijo) > 1:
+            # Mas de una carpeta SIN sufijo para el mismo radicado
+            # (ademas de alguna con sufijo) -- no hay forma segura de
+            # saber cual de las "sin sufijo" es la "principal" de la
+            # que si tiene sufijo, asi que no se adivina: se deja todo
+            # el grupo intacto para que lo revises a mano.
+            continue
+
+        principal = sin_sufijo[0] if sin_sufijo else max(carpetas, key=cruce_excel.contar_archivos)
+
+        for carpeta in con_sufijo:
             if carpeta == principal:
                 continue
             valido = _carpeta_local_tiene_demandante_valido(carpeta)
