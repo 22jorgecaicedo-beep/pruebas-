@@ -709,6 +709,32 @@ Usa la misma configuración (`RUTA_EXCEL`, `CARPETA_PROCESOS`, etc) que
 `validar_renombrar_carpetas.py` -- no hay que configurarla dos veces.
 Todo queda registrado en `crear_carpetas_terminados_castigo.log`.
 
+### Por qué el total de carpetas puede no coincidir con el total de filas del Excel
+
+Además de crear, el script audita **todas** las filas del Excel (no
+solo las que va a crear) para explicar cualquier diferencia entre el
+número de filas del Excel y el número de carpetas en el disco. Cada
+número de proceso sin carpeta cae en una de estas categorías, y todas
+quedan reportadas en el log con su fila y detalle:
+
+- **Número duplicado en el Excel**: el mismo número de proceso aparece
+  en más de una fila (con radicado y/o estado distintos). No se crea
+  ni se toca nada -- hay que corregir el Excel a mano, porque no se
+  puede adivinar cuál fila es la correcta.
+- **Activo/Suspendido/Reorganización con radicado**: ya está
+  rastreado en el listado de procesos faltantes
+  (`procesos_faltantes_en_disco.csv`) -- a propósito **no** se crea
+  una carpeta vacía aquí, porque ese proceso lo organiza
+  `buscar_faltantes_en_drive.py` buscando su contenido real. Si
+  quieres esa carpeta, corre ese script en vez de este.
+- **Activo/Suspendido/Reorganización sin radicado**: el radicado
+  todavía no está diligenciado en el Excel -- hay que llenarlo antes
+  de poder buscar o crear nada para ese proceso.
+- **Sin estado procesal diligenciado**: la fila tiene número de
+  proceso pero la columna `ESTADO PROCESAL` está vacía todavía.
+- **Estado sin clasificar**: no empieza con `TERMINADO`, `REMITIDA` ni
+  `NO INICIO` (ver arriba).
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
