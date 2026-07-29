@@ -40,6 +40,17 @@ faltantes_descargados_a_validar.csv, para que confirmes despues cual de
 esas descargas es la correcta y borres a mano las que no correspondan
 (el script nunca borra nada solo).
 
+TAMBIEN se valida el DEMANDADO (columna DEMANDADO del Excel, si
+existe): el mismo radicado corto o cuenta se puede repetir entre
+procesos DISTINTOS que van contra demandados diferentes (ej. "2024-00139
+CONTRA RIONEGRO" no es lo mismo que "2024-00139 CONTRA BOLIVAR"). Si un
+candidato (o un archivo dentro de una carpeta generica, o un adjunto de
+correo) trae un "CONTRA <algo>" en su nombre/asunto que NO corresponde
+al demandado del proceso que se esta buscando, se descarta -- aunque ya
+haya pasado la validacion de ESSA. Si el candidato no menciona ningun
+"CONTRA" en absoluto, esta validacion no bloquea nada (no hay evidencia
+ni a favor ni en contra). Ver _demandado_coincide_en_texto.
+
 Si un proceso YA tiene una carpeta en el disco (por ejemplo porque una
 corrida anterior ya lo descargo), se omite por completo sin buscar ni
 descargar nada -- para no crear carpetas "_2" duplicadas si se vuelve a
@@ -61,6 +72,16 @@ Esos archivos se mueven a Duplicados_para_revisar (nunca se borran); si
 una carpeta queda completamente vacia despues (todo era de otro
 proceso), esa carpeta VACIA si se borra, para que se vuelva a buscar
 en la proxima corrida. Ver revisar_contaminacion_en_disco().
+
+De la misma forma, tambien revisa TODAS las carpetas ya descargadas
+buscando archivos con un "CONTRA <algo>" que no corresponda al
+DEMANDADO real del proceso (segun el Excel) -- mismo rastro, pero para
+el caso de dos procesos que comparten radicado corto/cuenta y van
+contra demandados DISTINTOS. Esos archivos tambien se mueven a
+Duplicados_para_revisar (nunca se borran). Si es la CARPETA misma la
+que parece tener el demandado equivocado en su nombre, solo se avisa
+en el log (no se mueve ni renombra la carpeta sola) para que la
+revises a mano. Ver revisar_demandado_en_disco().
 
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
 busca la carpeta que lo contiene. Si esa carpeta contenedora es
@@ -115,6 +136,7 @@ import logging
 import os
 import re
 import shutil
+import unicodedata
 import uuid
 import zipfile
 from email.header import decode_header
@@ -192,6 +214,96 @@ MIME_EXPORTAR = {
 # o radicado corto por casualidad, pero son de un cliente distinto.
 TERMINOS_DEMANDANTE_VALIDO = ["essa", "electrificadora de santander"]
 
+# Palabras demasiado genericas del campo DEMANDADO del Excel como para
+# usarlas solas para distinguir un proceso de otro (ej. "MUNICIPIO DE
+# BARRANCABERMEJA" vs "MUNICIPIO DE RIONEGRO" -- "MUNICIPIO" y "DE" no
+# sirven para diferenciarlos, la palabra que SI importa es la ultima).
+# Se usan para quedarse solo con las palabras "significativas" del
+# nombre del demandado al compararlo contra un "CONTRA <algo>" que
+# aparezca en un nombre de carpeta/archivo/correo.
+PALABRAS_GENERICAS_DEMANDADO = {
+    "municipio", "departamento", "distrito", "alcaldia", "gobernacion",
+    "empresa", "sociedad", "compania", "cooperativa", "institucion",
+    "educativa", "colegio", "escuela", "fundacion", "corporacion",
+    "de", "del", "la", "el", "los", "las", "y", "san", "santa",
+    "sa", "esp", "ltda", "s", "a", "eu", "sas", "e",
+}
+
+# Minimo de letras para que una palabra del DEMANDADO cuente como
+# "significativa" (evita que iniciales sueltas como "S", "A" pasen el
+# filtro de PALABRAS_GENERICAS_DEMANDADO si quedaran mal separadas).
+MIN_LETRAS_PALABRA_DEMANDADO = 3
+
+# Busca "CONTRA <texto>" en un nombre de carpeta/archivo/correo -- forma
+# muy comun de nombrar expedientes en Colombia (ej. "2024-00139 CONTRA
+# RIONEGRO"). Se corta el texto capturado en el primer digito, guion,
+# parentesis o punto que aparezca despues, para no arrastrar el resto
+# del nombre (fecha, numero de radicado, extension del archivo, etc).
+_PATRON_CONTRA = re.compile(r"\bCONTRA\b[\s:.-]*([^0-9(){}\[\].]{1,80})", re.IGNORECASE)
+
+
+def _normalizar_para_comparar(texto: str) -> str:
+    """Mayusculas y sin tildes/diacriticos, para comparar nombres sin depender de como esten escritos."""
+    texto = unicodedata.normalize("NFKD", texto or "")
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return texto.upper()
+
+
+def _palabras_significativas(texto: str) -> set:
+    """Palabras de 'texto' (min. MIN_LETRAS_PALABRA_DEMANDADO letras) que no son PALABRAS_GENERICAS_DEMANDADO."""
+    normalizado = _normalizar_para_comparar(texto)
+    palabras = re.findall(r"[A-ZÑ]+", normalizado)
+    return {
+        p for p in palabras
+        if len(p) >= MIN_LETRAS_PALABRA_DEMANDADO and p.lower() not in PALABRAS_GENERICAS_DEMANDADO
+    }
+
+
+def _demandado_coincide_en_texto(texto: str, demandado_esperado: str):
+    """
+    Busca un "CONTRA <algo>" en 'texto' y lo compara contra el
+    DEMANDADO esperado (del Excel) por sus palabras significativas.
+
+    Devuelve:
+      - True: hay un "CONTRA <algo>" y SI coincide con el demandado esperado.
+      - False: hay un "CONTRA <algo>" pero NO coincide con ninguna palabra
+        del demandado esperado -- fuerte indicio de que es de OTRO
+        proceso (ej. "CONTRA RIONEGRO" cuando el proceso es contra
+        BOLIVAR).
+      - None: no se encontro ningun "CONTRA <algo>" en el texto, o el
+        demandado esperado no tiene ninguna palabra significativa para
+        comparar -- no hay evidencia ni a favor ni en contra, no se
+        bloquea nada por esto.
+    """
+    if not demandado_esperado or not demandado_esperado.strip():
+        return None
+    palabras_esperadas = _palabras_significativas(demandado_esperado)
+    if not palabras_esperadas:
+        return None
+
+    coincidencia = _PATRON_CONTRA.search(texto or "")
+    if not coincidencia:
+        return None
+    palabras_encontradas = _palabras_significativas(coincidencia.group(1))
+    if not palabras_encontradas:
+        return None
+    return bool(palabras_encontradas & palabras_esperadas)
+
+
+def _demandado_coincide_en_varios(textos, demandado_esperado):
+    """
+    Aplica _demandado_coincide_en_texto sobre varios textos (ej. nombre
+    de carpeta + nombres de sus archivos de primer nivel) y combina el
+    resultado: False (mal, rechazar) si CUALQUIERA de ellos da False;
+    si no, True si ALGUNO dio True; si ninguno dio nada, None.
+    """
+    resultados = [_demandado_coincide_en_texto(t, demandado_esperado) for t in textos]
+    if any(r is False for r in resultados):
+        return False
+    if any(r is True for r in resultados):
+        return True
+    return None
+
 # Cuantos archivos PDF/DOCX de una carpeta candidata se abren como
 # maximo para buscar el demandante en su CONTENIDO (si el nombre de la
 # carpeta/archivos no lo dice). Igual que MAX_ARCHIVOS_CONTENIDO_A_REVISAR
@@ -225,7 +337,7 @@ def configurar_logging():
 
 
 def leer_faltantes():
-    """Lee ARCHIVO_REPORTE_FALTANTES (No.;Cuenta;Radicado;Juzgado) generado por validar_renombrar_carpetas.py."""
+    """Lee ARCHIVO_REPORTE_FALTANTES (No.;Cuenta;Radicado;Juzgado;Demandado) generado por validar_renombrar_carpetas.py."""
     if not os.path.exists(ARCHIVO_REPORTE_FALTANTES):
         raise RuntimeError(
             f"No existe {ARCHIVO_REPORTE_FALTANTES}. Corre primero validar_renombrar_carpetas.py "
@@ -239,6 +351,10 @@ def leer_faltantes():
                 "cuenta": fila.get("Cuenta", "").strip(),
                 "radicado": fila.get("Radicado", "").strip(),
                 "juzgado": fila.get("Juzgado", "").strip(),
+                # Columna opcional -- si el CSV es de una version vieja del
+                # reporte (sin esta columna) o el Excel no tiene DEMANDADO,
+                # queda vacia y simplemente no se hace la validacion extra.
+                "demandado": fila.get("Demandado", "").strip(),
             })
     return faltantes
 
@@ -769,6 +885,20 @@ def _carpeta_local_tiene_demandante_valido(carpeta: Path) -> bool:
     return False
 
 
+def _carpeta_local_demandado_coincide(carpeta: Path, demandado: str):
+    """
+    Version LOCAL (en el disco, no en Drive) de _carpeta_demandado_coincide
+    -- revisa el nombre de 'carpeta' y de todos sus archivos buscando un
+    "CONTRA <algo>" que contradiga el DEMANDADO esperado. Ver
+    _demandado_coincide_en_texto para el significado de True/False/None.
+    """
+    try:
+        nombres = [carpeta.name] + [h.name for h in carpeta.rglob("*") if h.is_file()]
+    except OSError:
+        return None
+    return _demandado_coincide_en_varios(nombres, demandado)
+
+
 def _zip_tiene_demandante_valido_por_nombre(contenido: bytes) -> bool:
     """
     Revision RAPIDA (solo nombres de archivo dentro del zip, sin
@@ -986,6 +1116,127 @@ def revisar_contaminacion_en_disco():
             "[Contaminacion] %d archivo(s) que parecian de otro proceso se movieron a %s para que los "
             "revises; %d carpeta(s) quedaron completamente vacias y se borraron (se van a volver a buscar).",
             archivos_sospechosos, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, carpetas_vaciadas,
+        )
+
+
+def revisar_demandado_en_disco():
+    """
+    Revisa TODAS las carpetas ya descargadas en CARPETA_PROCESOS (no
+    solo las de esta corrida), buscando archivos cuyo nombre tenga un
+    "CONTRA <algo>" que NO corresponda al DEMANDADO real del proceso
+    segun el Excel (ver _demandado_coincide_en_texto) -- rastro de una
+    carpeta que mezclo contenido de OTRO proceso con el mismo radicado
+    corto o cuenta, pero un demandado DISTINTO (ej. "2024-00139 CONTRA
+    RIONEGRO" mezclado por error con documentos de "2024-00139 CONTRA
+    BOLIVAR").
+
+    Un archivo se marca como sospechoso SOLO si tiene un "CONTRA <algo>"
+    que no coincide con ninguna palabra significativa del demandado
+    esperado -- si el archivo no menciona ningun "CONTRA", no hay
+    evidencia y no se toca. Los archivos sospechosos se MUEVEN a
+    Duplicados_para_revisar (nunca se borran), igual que
+    revisar_contaminacion_en_disco.
+
+    Si el nombre de la CARPETA misma (no solo un archivo adentro) tiene
+    un "CONTRA <algo>" que no corresponde al demandado esperado, solo
+    se AVISA en el log -- no se mueve ni renombra la carpeta sola,
+    porque podria significar que quedo cruzada con el radicado
+    equivocado desde el principio, y eso conviene revisarlo a mano en
+    vez de adivinar.
+
+    Si el Excel no tiene la columna DEMANDADO (o RUTA_EXCEL no esta
+    configurado/disponible), esta revision simplemente se omite sin
+    afectar el resto del script. Respeta MODO_PRUEBA.
+    """
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return
+    if not cruce_excel.RUTA_EXCEL or not os.path.exists(cruce_excel.RUTA_EXCEL):
+        return
+    try:
+        demandados_por_radicado = cruce_excel.leer_demandados_por_radicado()
+    except Exception:
+        logging.exception("[Demandado] No se pudo leer el Excel para cruzar el demandado de cada proceso.")
+        return
+    if not demandados_por_radicado:
+        return
+
+    try:
+        carpetas = [
+            h for h in carpeta_procesos.iterdir()
+            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+        ]
+    except OSError:
+        return
+
+    archivos_sospechosos = 0
+    carpetas_avisadas = 0
+    for carpeta in carpetas:
+        radicado_carpeta = cruce_excel.radicado_de_nombre_carpeta(carpeta.name)
+        if not radicado_carpeta:
+            continue
+        demandado_esperado = demandados_por_radicado.get(radicado_carpeta)
+        if not demandado_esperado:
+            continue
+
+        if _demandado_coincide_en_texto(carpeta.name, demandado_esperado) is False:
+            carpetas_avisadas += 1
+            logging.warning(
+                "[Demandado] '%s' parece ser CONTRA otro demandado distinto a '%s' (el que tiene el Excel para "
+                "este radicado) -- revisa a mano si esta carpeta quedo cruzada con el proceso equivocado. No se "
+                "movio ni renombro nada solo.",
+                carpeta.name, demandado_esperado,
+            )
+
+        try:
+            archivos = [a for a in carpeta.rglob("*") if a.is_file()]
+        except OSError:
+            continue
+
+        for archivo in archivos:
+            if _demandado_coincide_en_texto(archivo.name, demandado_esperado) is not False:
+                continue
+
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION -- Demandado] '%s' (dentro de '%s') parece ser CONTRA otro demandado distinto "
+                    "a '%s' -- se moveria a %s.",
+                    archivo.name, carpeta.name, demandado_esperado, cruce_excel.NOMBRE_CARPETA_DUPLICADOS,
+                )
+                continue
+
+            carpeta_dup = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS / f"{carpeta.name} - posible contenido de otro proceso"
+            carpeta_dup.mkdir(parents=True, exist_ok=True)
+            destino = cruce_excel.ruta_libre(carpeta_dup, archivo.name)
+            try:
+                shutil.move(organizador._ruta_larga_segura(str(archivo)), organizador._ruta_larga_segura(str(destino)))
+            except OSError as error:
+                logging.warning("   (no se pudo mover '%s' de '%s': %s)", archivo.name, carpeta.name, error)
+                continue
+            archivos_sospechosos += 1
+            logging.info(
+                "[Demandado] '%s' (dentro de '%s') parece ser CONTRA otro demandado distinto a '%s' -- se "
+                "movio a '%s/%s'.",
+                archivo.name, carpeta.name, demandado_esperado, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, destino.name,
+            )
+
+        if not MODO_PRUEBA and cruce_excel.contar_archivos(carpeta) == 0:
+            try:
+                shutil.rmtree(carpeta)
+                logging.info(
+                    "[Demandado] '%s' quedo completamente vacia (todo lo que tenia era de otro demandado) -- se "
+                    "borro la carpeta vacia para que la proxima corrida la vuelva a buscar de cero.",
+                    carpeta.name,
+                )
+            except OSError as error:
+                logging.warning("   (no se pudo borrar la carpeta vacia '%s': %s)", carpeta.name, error)
+
+    if archivos_sospechosos or carpetas_avisadas:
+        logging.info(
+            "[Demandado] %d archivo(s) que parecian ser de un demandado distinto se movieron a %s para que los "
+            "revises; %d carpeta(s) completas quedaron marcadas para revision manual (su propio nombre no "
+            "corresponde al demandado del Excel).",
+            archivos_sospechosos, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, carpetas_avisadas,
         )
 
 
@@ -1328,8 +1579,27 @@ def _destino_compartido(numero: str, radicado: str, contexto: dict):
     return contexto["destino"], si_es_el_primero
 
 
+def _carpeta_demandado_coincide(servicio, carpeta, demandado):
+    """
+    Version de _demandado_coincide_en_varios para una carpeta de Drive:
+    revisa el nombre de 'carpeta' y los nombres de sus archivos de
+    primer nivel, buscando un "CONTRA <algo>" que contradiga el
+    DEMANDADO esperado del proceso (ver _demandado_coincide_en_texto).
+    """
+    textos = [carpeta.get("name", "")]
+    try:
+        respuesta = servicio.files().list(
+            q=f"'{carpeta['id']}' in parents and trashed = false",
+            fields="files(name)",
+        ).execute()
+        textos += [a.get("name", "") for a in respuesta.get("files", [])]
+    except HttpError:
+        pass
+    return _demandado_coincide_en_varios(textos, demandado)
+
+
 def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: str, confiable: bool,
-                            descargas_a_validar: list, contexto: dict) -> bool:
+                            descargas_a_validar: list, contexto: dict, demandado: str = "") -> bool:
     """
     Descarga (o simula) la carpeta de 'item' dentro de CARPETA_PROCESOS,
     como 'numero. radicado'. 'motivo' describe como se encontro (ej.
@@ -1363,6 +1633,11 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
     (traeria folios de otros casos mezclados): solo se bajan, de esa
     carpeta, los archivos de primer nivel que de verdad mencionen este
     radicado.
+
+    'demandado' (si se conoce, del Excel) se usa para no confundir dos
+    procesos DISTINTOS que comparten el mismo radicado corto o cuenta
+    (ej. "2024-00139 CONTRA RIONEGRO" no es lo mismo que "2024-00139
+    CONTRA BOLIVAR") -- ver _demandado_coincide_en_texto.
 
     Devuelve True si quedo lista (o se simulo, o ya estaba descargada de
     una busqueda anterior).
@@ -1402,6 +1677,18 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
                 carpeta["name"], radicado,
             )
             return False
+        archivos_sin_demandado_ajeno = [
+            a for a in archivos_sueltos
+            if _demandado_coincide_en_texto(a.get("name", ""), demandado) is not False
+        ]
+        if not archivos_sin_demandado_ajeno:
+            logging.info(
+                "   (se omite '%s': los archivos que mencionan el radicado %s parecen ser CONTRA otro "
+                "demandado distinto a '%s' -- probablemente OTRO proceso con el mismo radicado corto/cuenta)",
+                carpeta["name"], radicado, demandado,
+            )
+            return False
+        archivos_sueltos = archivos_sin_demandado_ajeno
         if not _archivos_tienen_demandante_valido(servicio, archivos_sueltos):
             logging.info(
                 "   (se omite '%s': los archivos que mencionan el radicado %s no mencionan a ESSA/"
@@ -1409,13 +1696,21 @@ def descargar_coincidencia(servicio, item, numero: str, radicado: str, motivo: s
                 carpeta["name"], radicado,
             )
             return False
-    elif not _carpeta_tiene_demandante_valido(servicio, carpeta):
-        logging.info(
-            "   (se omite '%s': coincide por %s, pero no se encontro a ESSA/Electrificadora de Santander como "
-            "demandante o demandado -- regla obligatoria, sin excepcion aunque el radicado sea exacto)",
-            carpeta["name"], motivo,
-        )
-        return False
+    else:
+        if _carpeta_demandado_coincide(servicio, carpeta, demandado) is False:
+            logging.info(
+                "   (se omite '%s': coincide por %s, pero parece ser CONTRA otro demandado distinto a '%s' -- "
+                "probablemente OTRO proceso con el mismo radicado corto/cuenta)",
+                carpeta["name"], motivo, demandado,
+            )
+            return False
+        if not _carpeta_tiene_demandante_valido(servicio, carpeta):
+            logging.info(
+                "   (se omite '%s': coincide por %s, pero no se encontro a ESSA/Electrificadora de Santander "
+                "como demandante o demandado -- regla obligatoria, sin excepcion aunque el radicado sea exacto)",
+                carpeta["name"], motivo,
+            )
+            return False
 
     if dedicada:
         if carpeta["id"] in contexto["ya_descargados"]:
@@ -1516,6 +1811,7 @@ def _finalizar_orden(numero: str, contexto: dict):
 
 def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: list):
     numero, cuenta, radicado, juzgado = fila["numero"], fila["cuenta"], fila["radicado"], fila["juzgado"]
+    demandado = fila.get("demandado", "")
 
     if radicado and _radicado_ya_en_disco(radicado):
         logging.info(
@@ -1536,7 +1832,8 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         carpetas = [c for c in coincidencias if c["mimeType"] == MIME_CARPETA]
         objetivo = carpetas[0] if carpetas else (coincidencias[0] if coincidencias else None)
         if objetivo and descargar_coincidencia(
-            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, contexto
+            servicio, objetivo, numero, radicado, "radicado completo", True, descargas_a_validar, contexto,
+            demandado,
         ):
             _finalizar_orden(numero, contexto)
             return
@@ -1555,14 +1852,16 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
         for corto in radicados_cortos(radicado):
             for c in buscar_en_drive(servicio, corto):
                 descargar_coincidencia(
-                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, contexto
+                    servicio, c, numero, radicado, f"radicado corto: {corto}", False, descargas_a_validar, contexto,
+                    demandado,
                 )
 
     if servicio and cuenta:
         if _cuenta_es_valida_para_buscar(cuenta):
             for c in buscar_en_drive(servicio, cuenta):
                 descargar_coincidencia(
-                    servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, contexto
+                    servicio, c, numero, radicado, f"cuenta: {cuenta}", False, descargas_a_validar, contexto,
+                    demandado,
                 )
         else:
             logging.info(
@@ -1594,18 +1893,29 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                             continue
                         descargar_coincidencia(
                             servicio, item, numero, radicado, f"correo ({termino}): {asunto}", confiable,
-                            descargas_a_validar, contexto,
+                            descargas_a_validar, contexto, demandado,
                         )
                 for nombre_zip, contenido in adjuntos:
-                    _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar, contexto)
+                    _organizar_adjunto_zip(
+                        numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar,
+                        contexto, demandado,
+                    )
 
     _finalizar_orden(numero, contexto)
 
 
 def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
-                            descargas_a_validar: list, contexto: dict):
+                            descargas_a_validar: list, contexto: dict, demandado: str = ""):
     motivo = "radicado completo" if confiable else f"correo ({termino}): {asunto}"
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
+
+    if _demandado_coincide_en_texto(f"{asunto} {nombre_zip}", demandado) is False:
+        logging.info(
+            "   (se omite el adjunto '%s' del correo '%s': el asunto/nombre parece ser CONTRA otro demandado "
+            "distinto a '%s' -- probablemente OTRO proceso con el mismo radicado corto/cuenta)",
+            nombre_zip, asunto, demandado,
+        )
+        return
 
     if MODO_PRUEBA:
         if not _zip_tiene_demandante_valido_por_nombre(contenido):
@@ -1660,12 +1970,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
             shutil.rmtree(temporal, ignore_errors=True)
             return
 
-        if not _carpeta_local_tiene_demandante_valido(temporal):
-            logging.info(
-                "   (se omite el adjunto '%s' del correo '%s': no se encontro a ESSA/Electrificadora de "
-                "Santander como demandante o demandado -- regla obligatoria, sin excepcion)",
-                nombre_zip, asunto,
-            )
+        def _mover_adjunto_a_duplicados():
             carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
             carpeta_duplicados.mkdir(parents=True, exist_ok=True)
             destino_dup = cruce_excel.ruta_libre(carpeta_duplicados, f"{numero}. {radicado} - correo {Path(nombre_zip).stem}")
@@ -1676,6 +1981,23 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
                     "   (no se pudo mover el adjunto extraido de '%s' a %s -- se deja en %s: %s)",
                     nombre_zip, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, temporal, error,
                 )
+
+        if _carpeta_local_demandado_coincide(temporal, demandado) is False:
+            logging.info(
+                "   (se omite el adjunto '%s' del correo '%s': su contenido parece ser CONTRA otro demandado "
+                "distinto a '%s' -- probablemente OTRO proceso con el mismo radicado corto/cuenta)",
+                nombre_zip, asunto, demandado,
+            )
+            _mover_adjunto_a_duplicados()
+            return
+
+        if not _carpeta_local_tiene_demandante_valido(temporal):
+            logging.info(
+                "   (se omite el adjunto '%s' del correo '%s': no se encontro a ESSA/Electrificadora de "
+                "Santander como demandante o demandado -- regla obligatoria, sin excepcion)",
+                nombre_zip, asunto,
+            )
+            _mover_adjunto_a_duplicados()
             return
 
         destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
@@ -1695,6 +2017,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
 def procesar():
     consolidar_duplicados_en_disco()
     revisar_contaminacion_en_disco()
+    revisar_demandado_en_disco()
     ordenar_todas_las_carpetas_en_disco()
 
     faltantes = leer_faltantes()

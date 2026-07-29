@@ -376,6 +376,18 @@ coincidió exacto. Un adjunto de correo que no pase esta regla se
 extrae igual, pero a `Duplicados_para_revisar` en vez de a la carpeta
 del proceso (nunca se pierde, solo no se mezcla con el caso).
 
+**También se valida el DEMANDADO** (columna `DEMANDADO` del Excel, si
+existe): el mismo radicado corto o cuenta se puede repetir entre
+procesos **distintos** que van contra demandados diferentes -- por
+ejemplo, `"2024-00139 CONTRA RIONEGRO"` no es lo mismo que `"2024-00139
+CONTRA BOLIVAR"`. Si un candidato (una carpeta, un archivo dentro de
+una carpeta genérica, o un adjunto de correo) trae un `"CONTRA <algo>"`
+en su nombre o asunto que **no** corresponde al demandado del proceso
+que se está buscando, se descarta -- aunque ya haya pasado la
+validación de ESSA. Si el candidato no menciona ningún `"CONTRA"` en
+absoluto, esta validación no bloquea nada (no hay evidencia ni a favor
+ni en contra).
+
 Los candidatos que sí pasan **también se descargan automático**. Si para el mismo proceso aparece
 MÁS de un candidato válido (ej. el expediente está repartido en varias
 carpetas de Drive -- una con el "poder", otra con el "expediente"),
@@ -462,6 +474,20 @@ Si al sacarlos una carpeta queda completamente vacía (todo su
 contenido era de otro proceso), esa carpeta vacía sí se borra, para
 que la próxima corrida la vuelva a buscar desde cero con el filtro ya
 corregido.
+
+**Revisión de demandado entre procesos:** de la misma forma, también
+al empezar, revisa TODAS las carpetas ya descargadas buscando archivos
+con un `"CONTRA <algo>"` que no corresponda al **demandado real** del
+proceso según el Excel -- mismo rastro que la revisión de
+contaminación, pero para el caso de dos procesos que comparten
+radicado corto/cuenta y van contra demandados **distintos**. Esos
+archivos también se mueven a `Duplicados_para_revisar` -- nunca se
+borran. Si es la **carpeta misma** la que parece tener el demandado
+equivocado en su nombre, solo se avisa en el log (no se mueve ni
+renombra la carpeta sola) para que la revises a mano -- podría
+significar que quedó cruzada con el radicado equivocado desde el
+principio. Si el Excel no tiene la columna `DEMANDADO`, esta revisión
+simplemente se omite.
 
 ### Configurar el acceso a Google Drive (una sola vez)
 

@@ -109,6 +109,15 @@ Al terminar, reporta (en pantalla y en un log):
 Por defecto corre en MODO_PRUEBA (no renombra ni mueve nada, solo muestra
 que haria). Revisa el reporte y, cuando confies en que el cruce esta bien,
 cambia MODO_PRUEBA a False para aplicar los cambios de verdad.
+
+El reporte de "procesos faltantes" (ARCHIVO_REPORTE_FALTANTES) incluye,
+si la columna DEMANDADO existe en el Excel, el demandado de cada
+proceso -- lo usa despues buscar_faltantes_en_drive.py para no
+confundir dos procesos DISTINTOS que comparten el mismo radicado corto
+o cuenta pero van contra demandados diferentes (ej. "2024-00139 CONTRA
+RIONEGRO" no es lo mismo que "2024-00139 CONTRA BOLIVAR"). Si esa
+columna no existe, el resto del reporte funciona igual, solo queda
+vacia esa parte.
 """
 
 import csv
@@ -195,6 +204,14 @@ COLUMNA_RADICADO = "RADICADO"
 COLUMNA_ESTADO = "ESTADO PROCESAL"
 COLUMNA_CUENTA = "CUENTA"
 COLUMNA_JUZGADO = "JUZGADO"
+
+# Nombre del DEMANDADO -- se usa para no confundir dos procesos DISTINTOS
+# que comparten el mismo radicado corto/cuenta (ej. "2024-00139 CONTRA
+# RIONEGRO" no es lo mismo que "2024-00139 CONTRA BOLIVAR"). A
+# diferencia de ESTADO/CUENTA/JUZGADO, si esta columna no existe el
+# resto del reporte de faltantes NO se ve afectado -- solo se pierde
+# esta validacion extra de demandado en buscar_faltantes_en_drive.py.
+COLUMNA_DEMANDADO = "DEMANDADO"
 
 # El reporte de "procesos faltantes" SOLO incluye procesos de estos
 # estados procesales (los demas estados se ignoran por completo para
@@ -358,9 +375,12 @@ def leer_datos_faltantes_por_radicado():
     del cruce normal. Para cada radicado de 23 digitos, guarda su ESTADO
     PROCESAL, CUENTA y JUZGADO (columnas COLUMNA_ESTADO, COLUMNA_CUENTA,
     COLUMNA_JUZGADO). Devuelve {radicado: {"estado":.., "cuenta":..,
-    "juzgado":..}}. Si alguna de esas tres columnas no existe en el
-    Excel, devuelve un diccionario vacio (ese reporte simplemente se
-    omite, sin error, y el resto del script sigue igual).
+    "juzgado":.., "demandado":..}}. Si alguna de las columnas ESTADO,
+    CUENTA o JUZGADO no existe en el Excel, devuelve un diccionario
+    vacio (ese reporte simplemente se omite, sin error, y el resto del
+    script sigue igual). La columna DEMANDADO es opcional aparte: si no
+    existe, "demandado" queda vacio para todas las filas, pero el resto
+    del reporte funciona igual.
     """
     wb = openpyxl.load_workbook(RUTA_EXCEL, data_only=True)
     if HOJA_EXCEL not in wb.sheetnames:
@@ -374,6 +394,10 @@ def leer_datos_faltantes_por_radicado():
         col_juzgado = encontrar_columna(encabezados, COLUMNA_JUZGADO)
     except ValueError:
         return {}
+    try:
+        col_demandado = encontrar_columna(encabezados, COLUMNA_DEMANDADO)
+    except ValueError:
+        col_demandado = None
 
     datos_por_radicado = {}
     for fila in range(FILA_ENCABEZADO + 1, ws.max_row + 1):
@@ -386,12 +410,48 @@ def leer_datos_faltantes_por_radicado():
         estado_crudo = ws.cell(row=fila, column=col_estado).value
         cuenta_crudo = ws.cell(row=fila, column=col_cuenta).value
         juzgado_crudo = ws.cell(row=fila, column=col_juzgado).value
+        demandado_crudo = ws.cell(row=fila, column=col_demandado).value if col_demandado else None
         datos_por_radicado[radicado] = {
             "estado": str(estado_crudo).strip() if estado_crudo is not None else "",
             "cuenta": str(cuenta_crudo).strip() if cuenta_crudo is not None else "",
             "juzgado": str(juzgado_crudo).strip() if juzgado_crudo is not None else "",
+            "demandado": str(demandado_crudo).strip() if demandado_crudo is not None else "",
         }
     return datos_por_radicado
+
+
+def leer_demandados_por_radicado():
+    """
+    Lee el Excel para obtener el DEMANDADO de CADA proceso con radicado
+    de 23 digitos (sin filtrar por estado -- a diferencia de
+    leer_datos_faltantes_por_radicado, que solo cubre los que faltan en
+    el disco). Devuelve {radicado: demandado}. Si la columna DEMANDADO
+    no existe, devuelve un diccionario vacio.
+    """
+    wb = openpyxl.load_workbook(RUTA_EXCEL, data_only=True)
+    if HOJA_EXCEL not in wb.sheetnames:
+        return {}
+    ws = wb[HOJA_EXCEL]
+    encabezados = [ws.cell(row=FILA_ENCABEZADO, column=c).value for c in range(1, ws.max_column + 1)]
+    try:
+        col_rad = encontrar_columna(encabezados, COLUMNA_RADICADO)
+        col_demandado = encontrar_columna(encabezados, COLUMNA_DEMANDADO)
+    except ValueError:
+        return {}
+
+    demandados_por_radicado = {}
+    for fila in range(FILA_ENCABEZADO + 1, ws.max_row + 1):
+        radicado_crudo = ws.cell(row=fila, column=col_rad).value
+        if radicado_crudo is None:
+            continue
+        radicado = re.sub(r"[\s\-]", "", str(radicado_crudo).strip())
+        if not (radicado.isdigit() and len(radicado) == 23):
+            continue
+        demandado_crudo = ws.cell(row=fila, column=col_demandado).value
+        demandado = str(demandado_crudo).strip() if demandado_crudo is not None else ""
+        if demandado:
+            demandados_por_radicado[radicado] = demandado
+    return demandados_por_radicado
 
 
 def leer_filas_excel(silencioso=False):
@@ -1544,13 +1604,13 @@ def procesar():
     datos_por_radicado = leer_datos_faltantes_por_radicado()
     if datos_por_radicado and faltantes:
         conteo_por_estado = {estado: 0 for estado in ESTADOS_A_CONTAR}
-        filas_reporte = []  # (numero, cuenta, radicado, juzgado)
+        filas_reporte = []  # (numero, cuenta, radicado, juzgado, demandado)
         for fila, numero, radicado in faltantes:
             datos = datos_por_radicado.get(radicado)
             if not datos or datos["estado"] not in conteo_por_estado:
                 continue
             conteo_por_estado[datos["estado"]] += 1
-            filas_reporte.append((numero, datos["cuenta"], radicado, datos["juzgado"]))
+            filas_reporte.append((numero, datos["cuenta"], radicado, datos["juzgado"], datos["demandado"]))
 
         total = sum(conteo_por_estado.values())
         logging.warning(
@@ -1562,7 +1622,8 @@ def procesar():
 
         filas_reporte.sort(key=lambda t: t[0])
         if _escribir_csv_tolerante(
-            ARCHIVO_REPORTE_FALTANTES, ["No.", "Cuenta", "Radicado", "Juzgado"], filas_reporte, "Faltan por agregar"
+            ARCHIVO_REPORTE_FALTANTES, ["No.", "Cuenta", "Radicado", "Juzgado", "Demandado"], filas_reporte,
+            "Faltan por agregar",
         ):
             logging.info("[Faltan por agregar] Reporte guardado en: %s", ARCHIVO_REPORTE_FALTANTES)
 
