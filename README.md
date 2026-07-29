@@ -380,13 +380,16 @@ del proceso (nunca se pierde, solo no se mezcla con el caso).
 existe): el mismo radicado corto o cuenta se puede repetir entre
 procesos **distintos** que van contra demandados diferentes -- por
 ejemplo, `"2024-00139 CONTRA RIONEGRO"` no es lo mismo que `"2024-00139
-CONTRA BOLIVAR"`. Si un candidato (una carpeta, un archivo dentro de
-una carpeta genérica, o un adjunto de correo) trae un `"CONTRA <algo>"`
-en su nombre o asunto que **no** corresponde al demandado del proceso
-que se está buscando, se descarta -- aunque ya haya pasado la
-validación de ESSA. Si el candidato no menciona ningún `"CONTRA"` en
-absoluto, esta validación no bloquea nada (no hay evidencia ni a favor
-ni en contra).
+CONTRA BOLIVAR"`. Con que el nombre del demandado esperado aparezca en
+**cualquier parte** del nombre/asunto/contenido del candidato alcanza
+para confirmarlo -- no hace falta que esté después de la palabra
+"CONTRA". Solo se descarta un candidato (una carpeta, un archivo dentro
+de una carpeta genérica, o un adjunto de correo) cuando sí trae un
+`"CONTRA <algo>"` (la forma habitual de nombrar expedientes) pero ese
+"algo" es un demandado **distinto** al esperado -- aunque ya haya
+pasado la validación de ESSA. Si el candidato no menciona ni al
+demandado esperado ni ningún otro `"CONTRA <algo>"`, esta validación no
+bloquea nada (no hay evidencia ni a favor ni en contra).
 
 Los candidatos que sí pasan **también se descargan automático**. Si para el mismo proceso aparece
 MÁS de un candidato válido (ej. el expediente está repartido en varias

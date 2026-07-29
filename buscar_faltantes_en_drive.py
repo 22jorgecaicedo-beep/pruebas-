@@ -43,13 +43,16 @@ esas descargas es la correcta y borres a mano las que no correspondan
 TAMBIEN se valida el DEMANDADO (columna DEMANDADO del Excel, si
 existe): el mismo radicado corto o cuenta se puede repetir entre
 procesos DISTINTOS que van contra demandados diferentes (ej. "2024-00139
-CONTRA RIONEGRO" no es lo mismo que "2024-00139 CONTRA BOLIVAR"). Si un
-candidato (o un archivo dentro de una carpeta generica, o un adjunto de
-correo) trae un "CONTRA <algo>" en su nombre/asunto que NO corresponde
-al demandado del proceso que se esta buscando, se descarta -- aunque ya
-haya pasado la validacion de ESSA. Si el candidato no menciona ningun
-"CONTRA" en absoluto, esta validacion no bloquea nada (no hay evidencia
-ni a favor ni en contra). Ver _demandado_coincide_en_texto.
+CONTRA RIONEGRO" no es lo mismo que "2024-00139 CONTRA BOLIVAR"). Con
+que el nombre del demandado esperado aparezca en CUALQUIER parte del
+nombre/asunto/contenido del candidato alcanza para confirmarlo (no hace
+falta que este despues de la palabra "CONTRA"). Solo se descarta un
+candidato cuando SI trae un "CONTRA <algo>" (la forma habitual de
+nombrar expedientes) pero ese "algo" es un demandado DISTINTO al
+esperado -- aunque ya haya pasado la validacion de ESSA. Si el
+candidato no menciona ni al demandado esperado ni ningun otro "CONTRA
+<algo>", esta validacion no bloquea nada (no hay evidencia ni a favor
+ni en contra). Ver _demandado_coincide_en_texto.
 
 Si un proceso YA tiene una carpeta en el disco (por ejemplo porque una
 corrida anterior ya lo descargo), se omite por completo sin buscar ni
@@ -226,7 +229,7 @@ PALABRAS_GENERICAS_DEMANDADO = {
     "empresa", "sociedad", "compania", "cooperativa", "institucion",
     "educativa", "colegio", "escuela", "fundacion", "corporacion",
     "de", "del", "la", "el", "los", "las", "y", "san", "santa",
-    "sa", "esp", "ltda", "s", "a", "eu", "sas", "e",
+    "sa", "esp", "ltda", "s", "a", "eu", "sas", "e", "contra",
 }
 
 # Minimo de letras para que una palabra del DEMANDADO cuente como
@@ -261,19 +264,22 @@ def _palabras_significativas(texto: str) -> set:
 
 def _demandado_coincide_en_texto(texto: str, demandado_esperado: str):
     """
-    Busca un "CONTRA <algo>" en 'texto' y lo compara contra el
-    DEMANDADO esperado (del Excel) por sus palabras significativas.
+    Compara 'texto' contra el DEMANDADO esperado (del Excel) por sus
+    palabras significativas.
 
     Devuelve:
-      - True: hay un "CONTRA <algo>" y SI coincide con el demandado esperado.
-      - False: hay un "CONTRA <algo>" pero NO coincide con ninguna palabra
-        del demandado esperado -- fuerte indicio de que es de OTRO
-        proceso (ej. "CONTRA RIONEGRO" cuando el proceso es contra
-        BOLIVAR).
-      - None: no se encontro ningun "CONTRA <algo>" en el texto, o el
-        demandado esperado no tiene ninguna palabra significativa para
-        comparar -- no hay evidencia ni a favor ni en contra, no se
-        bloquea nada por esto.
+      - True: el nombre del demandado esperado (o una palabra suya
+        suficientemente distintiva) aparece en CUALQUIER parte del
+        texto -- no hace falta que este despues de la palabra "CONTRA";
+        con que el nombre aparezca alcanza para confirmar.
+      - False: el texto SI tiene un "CONTRA <algo>" (la forma habitual
+        de nombrar expedientes en Colombia, ej. "2024-00139 CONTRA
+        RIONEGRO"), pero ese "algo" NO coincide con ninguna palabra del
+        demandado esperado -- fuerte indicio de que es de OTRO proceso
+        (ej. "CONTRA RIONEGRO" cuando el proceso es contra BOLIVAR).
+      - None: no se encontro el nombre del demandado esperado en ningun
+        lado, y tampoco hay un "CONTRA <algo>" que lo contradiga -- no
+        hay evidencia ni a favor ni en contra, no se bloquea nada.
     """
     if not demandado_esperado or not demandado_esperado.strip():
         return None
@@ -281,13 +287,16 @@ def _demandado_coincide_en_texto(texto: str, demandado_esperado: str):
     if not palabras_esperadas:
         return None
 
+    if _palabras_significativas(texto) & palabras_esperadas:
+        return True
+
     coincidencia = _PATRON_CONTRA.search(texto or "")
     if not coincidencia:
         return None
     palabras_encontradas = _palabras_significativas(coincidencia.group(1))
     if not palabras_encontradas:
         return None
-    return bool(palabras_encontradas & palabras_esperadas)
+    return False
 
 
 def _demandado_coincide_en_varios(textos, demandado_esperado):
