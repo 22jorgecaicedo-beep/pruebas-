@@ -610,22 +610,28 @@ sin esperar a que se revise el disco completo.
 
 Para cada proceso de esa lista que **ya tenga carpeta** en el disco:
 
-**Por defecto** (`REVISAR_CONTAMINACION_Y_DEMANDADO = False`), lo
+**Por defecto** (`BORRAR_ARCHIVOS_DE_OTRO_PROCESO = False`), lo
 **único** que hace es **ordenar cronológicamente** los documentos que
 YA están adentro de cada carpeta, numerándolos `1. `, `2. `, etc -- no
-mueve nada entre carpetas, no fusiona nada, no toca ninguna otra
-carpeta del disco.
+mueve ni borra nada, no fusiona nada, no toca ninguna otra carpeta del
+disco.
 
-Si además quieres que revise que cada carpeta **solo tenga documentos
-de su propio proceso** -- sacando archivos mezclados de otro proceso
-con un radicado corto parecido, o de un demandado distinto al que dice
-el Excel (las mismas revisiones de `buscar_faltantes_en_drive.py` --
-ver "Revisión de contaminación entre procesos" y "Revisión de
-demandado entre procesos" más arriba, pero aplicadas SOLO a estas
-carpetas) -- pon `REVISAR_CONTAMINACION_Y_DEMANDADO = True` al inicio
-del script. Esas dos revisiones **sí pueden mover archivos** (nunca los
-borran, los mueven a `Duplicados_para_revisar`) -- por eso quedan
-apagadas por defecto.
+Si además quieres que **borre** los archivos que parezcan de OTRO
+proceso -- porque mencionan un radicado corto distinto al de su propia
+carpeta, o porque tienen un `"CONTRA <algo>"` que no corresponde al
+demandado real según el Excel -- pon
+`BORRAR_ARCHIVOS_DE_OTRO_PROCESO = True` al inicio del script.
+
+**⚠️ A diferencia de TODOS los demás scripts de este proyecto** (que
+nunca borran nada, solo mueven a `Duplicados_para_revisar`), con
+`BORRAR_ARCHIVOS_DE_OTRO_PROCESO = True` los archivos que no coincidan
+se **borran de forma permanente e irreversible** -- no quedan en
+`Duplicados_para_revisar`, no se pueden recuperar. Esto se pidió así a
+propósito, para no acumular carpetas de revisión manual; revisa con
+calma el reporte en `MODO_PRUEBA = True` antes de correrlo con
+`MODO_PRUEBA = False`. Lo que sí se mantiene igual que en el resto del
+proyecto es que la **carpeta en sí nunca se mueve, renombra, ni se
+fusiona con otra** -- solo se borran archivos puntuales adentro.
 
 Los procesos de la lista que **todavía no tengan carpeta** en el disco
 se cuentan aparte y se omiten -- este script **no descarga nada** (para
@@ -640,8 +646,8 @@ Uso:
    `procesos_faltantes_en_disco.csv` esté al día.
 2. Corre `python validar_procesos_faltantes.py`.
 3. Por defecto corre en `MODO_PRUEBA = True` (solo revisa y te dice qué
-   ordenaría). Cambia `MODO_PRUEBA = False` al inicio del script para
-   aplicar los cambios de verdad.
+   ordenaría/borraría). Cambia `MODO_PRUEBA = False` al inicio del
+   script para aplicar los cambios de verdad.
 
 Todo queda registrado en `validar_procesos_faltantes.log`.
 

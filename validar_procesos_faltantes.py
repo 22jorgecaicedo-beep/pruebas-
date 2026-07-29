@@ -4,20 +4,28 @@ de faltantes (procesos_faltantes_en_disco.csv, la genera
 validar_renombrar_carpetas.py) -- de los que YA tengan carpeta en el
 disco (por ejemplo porque buscar_faltantes_en_drive.py ya los bajo).
 
-Por defecto (REVISAR_CONTAMINACION_Y_DEMANDADO = False), lo UNICO que
+Por defecto (BORRAR_ARCHIVOS_DE_OTRO_PROCESO = False), lo UNICO que
 hace es ordenar cronologicamente los documentos que YA estan adentro
 de cada carpeta de la lista, numerandolos "1. ", "2. ", etc (el mas
 viejo primero; ver ordenar_y_enumerar_carpeta) -- no mueve NADA entre
 carpetas, no fusiona nada, no toca ninguna otra carpeta del disco.
 
-Si ademas quieres que revise que cada carpeta solo tenga documentos de
-SU PROPIO proceso (sacando archivos mezclados de otro proceso con
-radicado parecido, o de un demandado distinto al del Excel -- ver
-revisar_contaminacion_en_disco/revisar_demandado_en_disco en
-buscar_faltantes_en_drive.py), pon
-REVISAR_CONTAMINACION_Y_DEMANDADO = True mas abajo. Esas dos revisiones
-SI pueden mover archivos (nunca los borran, los mueven a
-Duplicados_para_revisar) -- por eso quedan apagadas por defecto.
+Si ademas quieres que BORRE los archivos que parezcan de OTRO proceso
+(porque mencionan un radicado corto distinto al de su propia carpeta,
+o porque tienen un "CONTRA <algo>" que no corresponde al demandado real
+del proceso segun el Excel), pon BORRAR_ARCHIVOS_DE_OTRO_PROCESO = True
+mas abajo.
+
+IMPORTANTE, a diferencia de TODOS los demas scripts de este proyecto
+(que nunca borran nada, solo mueven a Duplicados_para_revisar): con
+BORRAR_ARCHIVOS_DE_OTRO_PROCESO = True, los archivos que no coincidan
+se BORRAN DE VERDAD, de forma PERMANENTE -- no quedan en
+Duplicados_para_revisar, no se pueden recuperar. Esto fue pedido asi a
+proposito (para no acumular carpetas de revision manual), pero es
+irreversible: revisa con calma el reporte en MODO_PRUEBA antes de
+correrlo con MODO_PRUEBA = False. Lo que SI se mantiene igual que en el
+resto del proyecto es que la CARPETA en si nunca se mueve, renombra, ni
+se fusiona con otra -- solo se borran archivos puntuales adentro.
 
 IMPORTANTE: corre primero validar_renombrar_carpetas.py (para que
 procesos_faltantes_en_disco.csv este al dia) antes de correr este
@@ -28,15 +36,15 @@ descarga nada (para eso esta buscar_faltantes_en_drive.py).
 A proposito, este script NO revisa todo el disco -- solo las carpetas
 de los procesos que estan en la lista de faltantes. Si quieres una
 revision de contaminacion/demandado/orden de TODAS las carpetas del
-disco (no solo estas), esa ya la hace buscar_faltantes_en_drive.py
-al empezar cada corrida (consolidar_duplicados_en_disco,
-revisar_contaminacion_en_disco, revisar_demandado_en_disco,
-ordenar_todas_las_carpetas_en_disco). Este script existe para cuando
-solo quieres ordenar rapido las de la lista de faltantes, sin esperar
-a que se revise el disco completo.
+disco (no solo estas, y sin borrar nada -- ver revisar_contaminacion_en_disco/
+revisar_demandado_en_disco en buscar_faltantes_en_drive.py, que mueven
+a Duplicados_para_revisar en vez de borrar), esa ya la hace
+buscar_faltantes_en_drive.py al empezar cada corrida. Este script existe
+para cuando solo quieres revisar/ordenar rapido las de la lista de
+faltantes, sin esperar a que se revise el disco completo.
 
 Respeta MODO_PRUEBA (por defecto True): en modo prueba solo simula y
-te dice que haria, sin mover ni renombrar nada todavia.
+te dice que haria, sin borrar, mover ni renombrar nada todavia.
 """
 
 import logging
@@ -51,17 +59,17 @@ import validar_renombrar_carpetas as cruce_excel
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_procesos_faltantes.log")
 
-# True (por defecto): no mueve ni renombra nada de verdad, solo revisa y
-# muestra que haria. False: aplica los cambios de verdad.
+# True (por defecto): no borra, mueve ni renombra nada de verdad, solo
+# revisa y muestra que haria. False: aplica los cambios de verdad.
 MODO_PRUEBA = True
 
 # False (por defecto): este script SOLO ordena cronologicamente los
 # documentos que ya estan adentro de cada carpeta de la lista -- no
-# mueve nada entre carpetas, no toca ninguna otra carpeta del disco.
-# True: ademas revisa contaminacion entre procesos y demandado
-# equivocado (puede MOVER archivos sospechosos a Duplicados_para_revisar,
-# nunca los borra -- ver el modulo docstring arriba).
-REVISAR_CONTAMINACION_Y_DEMANDADO = False
+# toca ninguna otra carpeta del disco ni borra nada.
+# True: ademas BORRA (de forma PERMANENTE, sin pasar por
+# Duplicados_para_revisar) los archivos que parezcan de OTRO proceso --
+# ver el modulo docstring arriba, es irreversible.
+BORRAR_ARCHIVOS_DE_OTRO_PROCESO = False
 
 # ===========================================================================
 
@@ -96,14 +104,88 @@ def _mapa_carpetas_por_radicado():
     return mapa
 
 
-def procesar():
-    # revisar_contaminacion_en_disco/revisar_demandado_en_disco (en
-    # buscar_faltantes_en_drive.py) leen el MODO_PRUEBA de ESE modulo,
-    # no el de este script -- se sincroniza para que respeten el mismo
-    # flag configurado aqui arriba (solo importa si
-    # REVISAR_CONTAMINACION_Y_DEMANDADO esta en True).
-    bfd.MODO_PRUEBA = MODO_PRUEBA
+def _motivo_archivo_de_otro_proceso(archivo, cortos_propios, demandado_esperado):
+    """
+    Devuelve un texto explicando por que 'archivo' parece ser de OTRO
+    proceso (para el mensaje de log), o None si no hay evidencia de eso.
+      - Menciona un radicado corto DISTINTO al propio de la carpeta, y
+        NUNCA el propio (si cita ambos, se asume que es un documento
+        legitimo que solo referencia un caso relacionado).
+      - Tiene un "CONTRA <algo>" que no corresponde al demandado
+        esperado (ver _demandado_coincide_en_texto).
+    """
+    if cortos_propios:
+        mencionados = bfd._radicados_cortos_mencionados(archivo.name)
+        if mencionados and not (mencionados & cortos_propios):
+            return f"menciona el radicado corto {', '.join(sorted(mencionados))}, pero no el propio de esta carpeta"
 
+    if demandado_esperado and bfd._demandado_coincide_en_texto(archivo.name, demandado_esperado) is False:
+        return f"parece ser CONTRA otro demandado, distinto a '{demandado_esperado}'"
+
+    return None
+
+
+def borrar_archivos_de_otro_proceso(carpetas):
+    """
+    Para cada carpeta en 'carpetas' (procesos de la lista de faltantes
+    que ya tienen carpeta en el disco), revisa archivo por archivo y
+    BORRA DEFINITIVAMENTE (no los mueve a Duplicados_para_revisar) los
+    que parezcan de OTRO proceso -- ver _motivo_archivo_de_otro_proceso.
+    La carpeta en si NUNCA se mueve, renombra, ni se fusiona con otra --
+    solo se borran archivos puntuales adentro. Respeta MODO_PRUEBA.
+    """
+    demandados_por_radicado = {}
+    if cruce_excel.RUTA_EXCEL and os.path.exists(cruce_excel.RUTA_EXCEL):
+        try:
+            demandados_por_radicado = cruce_excel.leer_demandados_por_radicado()
+        except Exception:
+            logging.exception("[Borrar] No se pudo leer el Excel para cruzar el demandado de cada proceso.")
+
+    borrados = 0
+    for carpeta in carpetas:
+        radicado_carpeta = cruce_excel.radicado_de_nombre_carpeta(carpeta.name)
+        if not radicado_carpeta:
+            continue
+        cortos_propios = set(bfd.radicados_cortos(radicado_carpeta))
+        demandado_esperado = demandados_por_radicado.get(radicado_carpeta, "")
+
+        try:
+            archivos = [a for a in carpeta.rglob("*") if a.is_file()]
+        except OSError:
+            continue
+
+        for archivo in archivos:
+            motivo = _motivo_archivo_de_otro_proceso(archivo, cortos_propios, demandado_esperado)
+            if not motivo:
+                continue
+
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION -- Borrar] '%s' (dentro de '%s'): %s -- se borraria PERMANENTEMENTE.",
+                    archivo.name, carpeta.name, motivo,
+                )
+                continue
+
+            try:
+                archivo.unlink()
+            except OSError as error:
+                logging.warning("   (no se pudo borrar '%s': %s)", archivo, error)
+                continue
+            borrados += 1
+            logging.warning(
+                "[Borrado] '%s' (dentro de '%s'): %s -- se borro PERMANENTEMENTE.",
+                archivo.name, carpeta.name, motivo,
+            )
+
+    if borrados:
+        logging.info(
+            "[Borrar] %d archivo(s) que parecian de otro proceso se borraron PERMANENTEMENTE (no quedaron "
+            "en Duplicados_para_revisar).",
+            borrados,
+        )
+
+
+def procesar():
     faltantes = bfd.leer_faltantes()
     logging.info("Procesos de la lista de faltantes a validar: %d", len(faltantes))
 
@@ -131,19 +213,18 @@ def procesar():
         logging.info("No hay ninguna carpeta de la lista de faltantes para validar todavia.")
         return
 
-    if REVISAR_CONTAMINACION_Y_DEMANDADO:
-        bfd.revisar_contaminacion_en_disco(carpetas_objetivo)
-        bfd.revisar_demandado_en_disco(carpetas_objetivo)
+    if BORRAR_ARCHIVOS_DE_OTRO_PROCESO:
+        borrar_archivos_de_otro_proceso(carpetas_objetivo)
     else:
         logging.info(
-            "(REVISAR_CONTAMINACION_Y_DEMANDADO esta en False -- no se revisa si hay archivos mezclados de "
-            "otro proceso/demandado, solo se ordenan cronologicamente los documentos que ya estan en cada "
-            "carpeta. Ninguna carpeta se toca aparte de las de la lista de faltantes.)"
+            "(BORRAR_ARCHIVOS_DE_OTRO_PROCESO esta en False -- no se borra nada, solo se ordenan "
+            "cronologicamente los documentos que ya estan en cada carpeta. Ninguna carpeta se toca aparte de "
+            "las de la lista de faltantes.)"
         )
 
     if MODO_PRUEBA:
         logging.info(
-            "MODO_PRUEBA esta activo: no se ordeno/renumero ni se movio nada todavia. Revisa el log y, si se "
+            "MODO_PRUEBA esta activo: no se borro, ordeno ni renumero nada todavia. Revisa el log y, si se "
             "ve bien, cambia MODO_PRUEBA = False al inicio de este script y vuelve a correrlo."
         )
         return
