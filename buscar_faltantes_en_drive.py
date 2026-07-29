@@ -59,7 +59,14 @@ corrida anterior ya lo descargo), se omite por completo sin buscar ni
 descargar nada -- para no crear carpetas "_2" duplicadas si se vuelve a
 correr el script sobre un procesos_faltantes_en_disco.csv desactualizado.
 
-Al empezar, tambien revisa si ya quedaron carpetas "_2", "_3", etc en el
+Al empezar, tambien revisa si quedaron carpetas TEMPORALES sueltas de
+una corrida anterior que se cerro a la mitad, o que no se pudieron
+borrar solas (ej. un archivo bloqueado por el antivirus/OneDrive justo
+en ese momento) -- nunca se borran solas, se mueven a
+Duplicados_para_revisar para que las revises. Ver
+limpiar_carpetas_temporales_huerfanas().
+
+Tambien revisa si ya quedaron carpetas "_2", "_3", etc en el
 disco de corridas ANTERIORES a estos filtros (por ejemplo, de antes de
 que existiera la validacion de demandante ESSA) -- revalida cada una:
 si menciona a ESSA, la fusiona dentro de su carpeta principal; si no,
@@ -947,6 +954,85 @@ def _zip_tiene_demandante_valido_por_nombre(contenido: bytes) -> bool:
     return any(_nombre_coincide(Path(n).name, t) for n in nombres for t in TERMINOS_DEMANDANTE_VALIDO)
 
 
+def limpiar_carpetas_temporales_huerfanas():
+    """
+    Al empezar, revisa si quedaron carpetas TEMPORALES sueltas de una
+    corrida anterior que se cerro a la mitad, o que no se pudieron
+    borrar solas (ej. un archivo adentro bloqueado por el antivirus o
+    por OneDrive -- ver la advertencia que dejan _fusionar_sin_perder_nada
+    y _organizar_adjunto_zip cuando eso pasa). Nunca se sabe con certeza
+    si TODO su contenido ya quedo copiado en su carpeta final, asi que
+    NUNCA se borran solas: se mueven a Duplicados_para_revisar para que
+    las revises tu.
+
+    Revisa dos lugares:
+      - Carpetas "_tmp_fusion_...", "_tmp_extraccion_correo_..." sueltas
+        directo en CARPETA_PROCESOS (las crea este mismo script al
+        fusionar candidatos de Drive o adjuntos de correo).
+      - Subcarpetas sueltas DENTRO de "_tmp_extraccion" (la usa
+        procesos_juridicos.py para extraer los zips que bajas a mano) --
+        esa carpeta en si NO se toca, es de uso permanente; solo lo que
+        haya quedado adentro de una corrida interrumpida.
+
+    Respeta MODO_PRUEBA.
+    """
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return
+
+    candidatas = []
+    try:
+        candidatas += [
+            h for h in carpeta_procesos.iterdir()
+            if h.is_dir() and (h.name.startswith("_tmp_fusion_") or h.name.startswith("_tmp_extraccion_correo_"))
+        ]
+    except OSError:
+        pass
+
+    carpeta_temp_manual = Path(organizador.CARPETA_TEMP_MANUAL)
+    if carpeta_temp_manual.exists():
+        try:
+            candidatas += [h for h in carpeta_temp_manual.iterdir() if h.is_dir()]
+        except OSError:
+            pass
+
+    if not candidatas:
+        return
+
+    if MODO_PRUEBA:
+        for carpeta in candidatas:
+            logging.info(
+                "[SIMULACION -- Temporales] '%s' parece una carpeta temporal que quedo de una corrida "
+                "anterior -- se moveria a %s.",
+                carpeta, cruce_excel.NOMBRE_CARPETA_DUPLICADOS,
+            )
+        return
+
+    movidas = 0
+    for carpeta in candidatas:
+        carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+        carpeta_duplicados.mkdir(parents=True, exist_ok=True)
+        destino = cruce_excel.ruta_libre(carpeta_duplicados, f"temporal - {carpeta.name}")
+        try:
+            shutil.move(organizador._ruta_larga_segura(str(carpeta)), organizador._ruta_larga_segura(str(destino)))
+        except OSError as error:
+            logging.warning("   (no se pudo mover la carpeta temporal '%s': %s)", carpeta, error)
+            continue
+        movidas += 1
+        logging.info(
+            "[Temporales] '%s' parecia una carpeta temporal que quedo de una corrida anterior -- se movio a "
+            "'%s/%s' para que la revises (puede que su contenido ya este copiado en la carpeta final del "
+            "proceso, o puede que no -- revisala antes de borrarla).",
+            carpeta, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, destino.name,
+        )
+
+    if movidas:
+        logging.info(
+            "[Temporales] %d carpeta(s) temporal(es) sueltas se movieron a %s para que las revises.",
+            movidas, cruce_excel.NOMBRE_CARPETA_DUPLICADOS,
+        )
+
+
 _PATRON_SUFIJO_DUPLICADO = re.compile(r"_\d+$")
 
 
@@ -1140,7 +1226,7 @@ def revisar_contaminacion_en_disco(carpetas=None):
 
         if not MODO_PRUEBA and cruce_excel.contar_archivos(carpeta) == 0:
             try:
-                shutil.rmtree(carpeta)
+                shutil.rmtree(organizador._ruta_larga_segura(str(carpeta)))
                 carpetas_vaciadas += 1
                 logging.info(
                     "[Contaminacion] '%s' quedo completamente vacia (todo lo que tenia era de otros procesos) "
@@ -1268,7 +1354,7 @@ def revisar_demandado_en_disco(carpetas=None):
 
         if not MODO_PRUEBA and cruce_excel.contar_archivos(carpeta) == 0:
             try:
-                shutil.rmtree(carpeta)
+                shutil.rmtree(organizador._ruta_larga_segura(str(carpeta)))
                 logging.info(
                     "[Demandado] '%s' quedo completamente vacia (todo lo que tenia era de otro demandado) -- se "
                     "borro la carpeta vacia para que la proxima corrida la vuelva a buscar de cero.",
@@ -1655,7 +1741,15 @@ def _fusionar_sin_perder_nada(origen, destino) -> int:
                 "Windows, o hay un problema de permisos/antivirus; se omite y se sigue con el resto: %s)",
                 relativo, destino, error,
             )
-    shutil.rmtree(str(origen), ignore_errors=True)
+    try:
+        shutil.rmtree(organizador._ruta_larga_segura(str(origen)))
+    except OSError as error:
+        logging.warning(
+            "   (ya se fusiono todo lo que se pudo de '%s' en '%s', pero no se pudo borrar la carpeta "
+            "temporal '%s' -- probablemente un archivo adentro esta bloqueado por el antivirus o alguna "
+            "sincronizacion (OneDrive, etc). Puedes borrarla a mano; su contenido ya quedo copiado: %s)",
+            origen, destino, origen, error,
+        )
     return copiados
 
 
@@ -2062,7 +2156,10 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
                 "[Correo] El adjunto '%s' del correo '%s' no dejo ningun archivo PDF -- se omite.",
                 nombre_zip, asunto,
             )
-            shutil.rmtree(temporal, ignore_errors=True)
+            try:
+                shutil.rmtree(organizador._ruta_larga_segura(str(temporal)))
+            except OSError as error:
+                logging.warning("   (no se pudo borrar la carpeta temporal '%s': %s)", temporal, error)
             return
 
         # Un documento que llega por correo casi nunca trae una fecha
@@ -2126,6 +2223,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
 
 
 def procesar():
+    limpiar_carpetas_temporales_huerfanas()
     consolidar_duplicados_en_disco()
     revisar_contaminacion_en_disco()
     revisar_demandado_en_disco()

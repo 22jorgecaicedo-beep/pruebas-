@@ -1281,7 +1281,13 @@ def procesar():
                             "falta): %s",
                             ruta_origen_para_copiar.name, destino_copia.name, error,
                         )
-                        shutil.rmtree(destino_copia, ignore_errors=True)
+                        try:
+                            shutil.rmtree(_ruta_larga_segura(str(destino_copia)))
+                        except OSError as error_borrar:
+                            logging.warning(
+                                "   (la copia parcial '%s' quedo en el disco, no se pudo borrar: %s)",
+                                destino_copia, error_borrar,
+                            )
                         continue
                     logging.info(
                         "[Duplicado en Excel] Se creo una copia de '%s' como '%s' (radicado %s duplicado en "

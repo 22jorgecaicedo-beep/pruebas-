@@ -505,7 +505,15 @@ def fusionar_carpeta_en_destino(origen, destino) -> int:
                 "Windows, o hay un problema de permisos/antivirus; se omite y se sigue con el resto: %s)",
                 relativo, destino, error,
             )
-    shutil.rmtree(str(origen), ignore_errors=True)
+    try:
+        shutil.rmtree(_ruta_larga_segura(str(origen)))
+    except OSError as error:
+        logging.warning(
+            "   (ya se fusiono todo lo que se pudo de '%s' en '%s', pero no se pudo borrar la carpeta "
+            "temporal '%s' -- probablemente un archivo adentro esta bloqueado por el antivirus o alguna "
+            "sincronizacion (OneDrive, etc). Puedes borrarla a mano; su contenido ya quedo copiado: %s)",
+            origen, destino, origen, error,
+        )
     return copiados
 
 
@@ -676,7 +684,10 @@ def procesar_zip_manual(ruta_zip: str):
             "NO se movio a Procesados para que puedas revisarlo/reintentarlo a mano.",
             nombre_zip,
         )
-        shutil.rmtree(carpeta_extraida, ignore_errors=True)
+        try:
+            shutil.rmtree(_ruta_larga_segura(str(carpeta_extraida)))
+        except OSError as error:
+            logging.warning("   (no se pudo borrar la carpeta temporal '%s': %s)", carpeta_extraida, error)
         return
 
     if archivos_fallidos:
@@ -1044,7 +1055,10 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
         archivos_extraidos, archivos_fallidos = _extraer_zip_tolerante(ruta_zip, destino_final)
         if archivos_extraidos == 0:
             if not ya_existia:
-                shutil.rmtree(destino_final, ignore_errors=True)
+                try:
+                    shutil.rmtree(_ruta_larga_segura(str(destino_final)))
+                except OSError as error:
+                    logging.warning("   (no se pudo borrar la carpeta vacia '%s': %s)", destino_final, error)
             raise RuntimeError(
                 f"El zip del expediente {expediente} no dejo NINGUN archivo al extraerlo (revisa arriba en el "
                 "log si salio 'protegido con contrasena', 'ruta muy larga', o si el antivirus lo puso en "
@@ -1122,7 +1136,14 @@ def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str
 
     carpeta_temp = os.path.join(CARPETA_TEMP_DESCARGAS, expediente)
     if os.path.exists(carpeta_temp):
-        shutil.rmtree(carpeta_temp)
+        try:
+            shutil.rmtree(_ruta_larga_segura(carpeta_temp))
+        except OSError as error:
+            logging.warning(
+                "   (no se pudo borrar la carpeta temporal vieja '%s' antes de descargar de nuevo -- se sigue "
+                "igual, la descarga se mezclara con lo que ya haya ahi: %s)",
+                carpeta_temp, error,
+            )
     os.makedirs(carpeta_temp, exist_ok=True)
 
     try:
@@ -1136,7 +1157,10 @@ def descargar_expediente(pagina, correo_usuario: str, link: str, expediente: str
         logging.info("[SGDE] Proceso organizado en: %s", destino_final)
     finally:
         if os.path.exists(carpeta_temp):
-            shutil.rmtree(carpeta_temp, ignore_errors=True)
+            try:
+                shutil.rmtree(_ruta_larga_segura(carpeta_temp))
+            except OSError as error:
+                logging.warning("   (no se pudo borrar la carpeta temporal '%s': %s)", carpeta_temp, error)
 
 
 def procesar_expedientes_nuevos(usuario: str, app_password: str, navegador):

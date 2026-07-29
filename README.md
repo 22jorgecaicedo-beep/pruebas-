@@ -468,6 +468,16 @@ ni mucho menos el resto de la lista. Lo mismo si un proceso entero
 falla por algo inesperado: se registra el error y se sigue con el
 siguiente, en vez de detener toda la corrida a mitad de camino.
 
+**Carpetas temporales sueltas:** lo primero que hace el script al
+empezar es revisar si quedaron carpetas `_tmp_fusion_...`,
+`_tmp_extraccion_correo_...` (u otras sueltas dentro de
+`_tmp_extraccion`) de una corrida anterior que se cerró a la mitad, o
+que no se pudieron borrar solas (por ejemplo, un archivo adentro
+bloqueado por el antivirus o por OneDrive justo en ese momento). Como
+nunca se sabe con certeza si todo su contenido ya quedó copiado en su
+carpeta final, **nunca se borran solas**: se mueven a
+`Duplicados_para_revisar` para que las revises tú.
+
 **Limpieza automática de corridas anteriores:** al empezar, el script
 también revisa si ya quedaron carpetas "_2", "_3", etc en el disco de
 corridas viejas (por ejemplo, de antes de que existiera el filtro de
