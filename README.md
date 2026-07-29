@@ -437,6 +437,22 @@ a `Duplicados_para_revisar` -- nunca la borra -- para que la revises a
 mano, porque probablemente es ruido de otro proceso que compartía
 cuenta o radicado corto.
 
+**Revisión de contaminación entre procesos:** también al empezar,
+revisa TODAS las carpetas ya descargadas (de cualquier corrida,
+incluidas las de hace tiempo) buscando archivos cuyo nombre mencione
+un radicado corto **distinto** al de su propia carpeta -- rastro de un
+bug ya corregido donde, por ejemplo, `"2023-24"` se confundía con
+`"2023-244"` (otro proceso, solo comparte el prefijo numérico) y
+terminaban documentos de un caso mezclados en la carpeta del otro. Un
+archivo solo se mueve si menciona OTRO radicado y **nunca** el propio
+(si cita ambos, se asume que es un documento legítimo que solo
+referencia un caso relacionado, y no se toca). Los archivos
+sospechosos se mueven a `Duplicados_para_revisar` -- nunca se borran.
+Si al sacarlos una carpeta queda completamente vacía (todo su
+contenido era de otro proceso), esa carpeta vacía sí se borra, para
+que la próxima corrida la vuelva a buscar desde cero con el filtro ya
+corregido.
+
 ### Configurar el acceso a Google Drive (una sola vez)
 
 1. Ve a [console.cloud.google.com](https://console.cloud.google.com/) y

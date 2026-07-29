@@ -52,6 +52,16 @@ si menciona a ESSA, la fusiona dentro de su carpeta principal; si no,
 la mueve a Duplicados_para_revisar (nunca la borra) para que la
 revises. Ver consolidar_duplicados_en_disco().
 
+Tambien revisa TODAS las carpetas ya descargadas (de esta corrida o de
+cualquier corrida anterior) buscando archivos que mencionen un
+radicado corto DISTINTO al de su propia carpeta -- rastro de un bug ya
+corregido donde un radicado corto como "2023-24" se confundia con
+"2023-244" (de OTRO proceso) por compartir el mismo prefijo numerico.
+Esos archivos se mueven a Duplicados_para_revisar (nunca se borran); si
+una carpeta queda completamente vacia despues (todo era de otro
+proceso), esa carpeta VACIA si se borra, para que se vuelva a buscar
+en la proxima corrida. Ver revisar_contaminacion_en_disco().
+
 Si lo que encuentra es un ARCHIVO suelto (no una carpeta) que coincide,
 busca la carpeta que lo contiene. Si esa carpeta contenedora es
 "propia" del caso (su nombre menciona el radicado, o la busqueda
@@ -834,6 +844,112 @@ def consolidar_duplicados_en_disco():
         )
 
 
+_PATRON_RADICADO_CORTO_EN_NOMBRE = re.compile(r"(?<!\d)(\d{4})-(\d{2,5})(?!\d)")
+
+
+def _radicados_cortos_mencionados(nombre: str):
+    """Todos los radicados CORTOS ("AAAA-N...") que aparecen en 'nombre', con limites claros de digito -- ver _PATRON_RADICADO_CORTO_EN_NOMBRE."""
+    return {f"{m.group(1)}-{m.group(2)}" for m in _PATRON_RADICADO_CORTO_EN_NOMBRE.finditer(nombre)}
+
+
+def revisar_contaminacion_en_disco():
+    """
+    Revisa TODAS las carpetas ya descargadas en CARPETA_PROCESOS (no
+    solo las de esta corrida), buscando archivos cuyo NOMBRE mencione
+    un radicado corto DISTINTO al de la carpeta que los contiene --
+    rastro del bug ya corregido en _nombre_coincide (donde un radicado
+    corto como "2023-24" se confundia con "2023-244" o "2023-248", de
+    OTRO proceso, y terminaba mezclado en la carpeta equivocada).
+
+    Un archivo se marca como sospechoso SOLO si menciona OTRO radicado
+    corto y NUNCA menciona el radicado propio de la carpeta (si
+    menciona ambos, se asume que es un documento legitimo que solo
+    cita un caso relacionado, y no se toca). Los archivos sospechosos
+    se MUEVEN a Duplicados_para_revisar (nunca se borran) para que los
+    revises. Si al sacarlos una carpeta queda COMPLETAMENTE vacia
+    (todo su contenido era de otro proceso), esa carpeta VACIA si se
+    borra -- no hay nada real que perder, y asi la proxima corrida de
+    este script la vuelve a buscar de cero, con el filtro ya corregido.
+
+    Solo revisa los NOMBRES de archivo (no abre el contenido) -- rapido
+    incluso con cientos de carpetas. Respeta MODO_PRUEBA.
+    """
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return
+
+    try:
+        carpetas = [
+            h for h in carpeta_procesos.iterdir()
+            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+        ]
+    except OSError:
+        return
+
+    archivos_sospechosos = 0
+    carpetas_vaciadas = 0
+    for carpeta in carpetas:
+        radicado_carpeta = cruce_excel.radicado_de_nombre_carpeta(carpeta.name)
+        if not radicado_carpeta:
+            continue
+        cortos_propios = set(radicados_cortos(radicado_carpeta))
+        if not cortos_propios:
+            continue
+
+        try:
+            archivos = [a for a in carpeta.rglob("*") if a.is_file()]
+        except OSError:
+            continue
+
+        for archivo in archivos:
+            mencionados = _radicados_cortos_mencionados(archivo.name)
+            if not mencionados or (mencionados & cortos_propios):
+                continue
+            ajenos = sorted(mencionados)
+
+            if MODO_PRUEBA:
+                logging.info(
+                    "[SIMULACION -- Contaminacion] '%s' (dentro de '%s', radicado %s) menciona %s pero no su "
+                    "propio radicado -- parece de OTRO proceso; se moveria a %s.",
+                    archivo.name, carpeta.name, radicado_carpeta, ", ".join(ajenos), cruce_excel.NOMBRE_CARPETA_DUPLICADOS,
+                )
+                continue
+
+            carpeta_dup = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS / f"{carpeta.name} - posible contenido de otro proceso"
+            carpeta_dup.mkdir(parents=True, exist_ok=True)
+            destino = cruce_excel.ruta_libre(carpeta_dup, archivo.name)
+            try:
+                shutil.move(organizador._ruta_larga_segura(str(archivo)), organizador._ruta_larga_segura(str(destino)))
+            except OSError as error:
+                logging.warning("   (no se pudo mover '%s' de '%s': %s)", archivo.name, carpeta.name, error)
+                continue
+            archivos_sospechosos += 1
+            logging.info(
+                "[Contaminacion] '%s' (dentro de '%s', radicado %s) menciona %s pero no su propio radicado -- "
+                "parece de OTRO proceso; se movio a '%s/%s'.",
+                archivo.name, carpeta.name, radicado_carpeta, ", ".join(ajenos), cruce_excel.NOMBRE_CARPETA_DUPLICADOS, destino.name,
+            )
+
+        if not MODO_PRUEBA and cruce_excel.contar_archivos(carpeta) == 0:
+            try:
+                shutil.rmtree(carpeta)
+                carpetas_vaciadas += 1
+                logging.info(
+                    "[Contaminacion] '%s' quedo completamente vacia (todo lo que tenia era de otros procesos) "
+                    "-- se borro la carpeta vacia para que la proxima corrida la vuelva a buscar de cero.",
+                    carpeta.name,
+                )
+            except OSError as error:
+                logging.warning("   (no se pudo borrar la carpeta vacia '%s': %s)", carpeta.name, error)
+
+    if archivos_sospechosos or carpetas_vaciadas:
+        logging.info(
+            "[Contaminacion] %d archivo(s) que parecian de otro proceso se movieron a %s para que los "
+            "revises; %d carpeta(s) quedaron completamente vacias y se borraron (se van a volver a buscar).",
+            archivos_sospechosos, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, carpetas_vaciadas,
+        )
+
+
 # ==================== Orden cronologico de documentos ====================
 
 _MESES = {
@@ -1477,6 +1593,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
 
 def procesar():
     consolidar_duplicados_en_disco()
+    revisar_contaminacion_en_disco()
 
     faltantes = leer_faltantes()
     logging.info("Procesos faltantes a buscar: %d", len(faltantes))
