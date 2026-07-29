@@ -515,6 +515,16 @@ desactualizado.
   queda en Descargas para que lo revises o reintentes a mano. Si algunos
   archivos sí se extrajeron pero otros no, la carpeta se organiza igual
   con lo que se pudo, y queda un `WARNING` explicando cuántos fallaron.
+- Al extraer un zip, si una carpeta o archivo dentro trae **espacios o
+  puntos al final del nombre** (Windows los maneja mal incluso con el
+  truco de rutas largas), se le quitan automáticamente al crearlo en el
+  disco -- así se evita el error clásico "el sistema no puede encontrar
+  la ruta especificada" al leerlo después.
+- Si `procesos_faltantes_en_disco.csv` (o los otros reportes CSV) están
+  abiertos en Excel cuando corres `validar_renombrar_carpetas.py`, el
+  script ya no crashea al intentar guardarlos -- avisa con un `ERROR`
+  claro pidiéndote que cierres el archivo, y el resto del análisis
+  (que sí se calculó bien) queda visible igual en el log.
 - **Importante sobre carpetas vacías de ANTES de esta corrección**: si ya
   tienes carpetas vacías de cuando el programa sí las creaba aunque la
   extracción fallara, `procesos_juridicos.py` **no las va a arreglar

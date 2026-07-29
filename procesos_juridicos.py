@@ -435,6 +435,19 @@ def fusionar_carpeta_en_destino(origen, destino) -> int:
     return copiados
 
 
+def _ruta_zip_saneada(destino_normalizado: str, nombre_miembro: str) -> str:
+    """
+    Construye la ruta de destino para un miembro de un zip, saneando
+    CADA segmento de la ruta (no solo el nombre final) con sanear_nombre.
+    Un nombre de carpeta/archivo con espacios o puntos al final es
+    valido DENTRO de un zip, pero Windows lo maneja mal incluso con el
+    prefijo de ruta larga (\\\\?\\) al leerlo despues -- mejor nunca
+    dejar que llegue a crearse asi en el disco.
+    """
+    segmentos = [s for s in nombre_miembro.replace("\\", "/").split("/") if s not in ("", ".", "..")]
+    return os.path.join(destino_normalizado, *(sanear_nombre(s) for s in segmentos)) if segmentos else destino_normalizado
+
+
 def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
     """
     Extrae un zip archivo por archivo. Si uno esta protegido con
@@ -450,7 +463,7 @@ def _extraer_zip_tolerante(ruta_zip: str, destino_extraccion: str):
     destino_normalizado = os.path.normpath(os.path.abspath(destino_extraccion))
     with zipfile.ZipFile(ruta_zip, "r") as zf:
         for miembro in zf.infolist():
-            ruta_destino = os.path.normpath(os.path.join(destino_normalizado, miembro.filename))
+            ruta_destino = os.path.normpath(_ruta_zip_saneada(destino_normalizado, miembro.filename))
             if not ruta_destino.startswith(destino_normalizado):
                 logging.warning("Ruta sospechosa dentro de %s, se omite: %s", os.path.basename(ruta_zip), miembro.filename)
                 continue

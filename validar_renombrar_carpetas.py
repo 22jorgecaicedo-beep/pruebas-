@@ -308,6 +308,28 @@ def configurar_logging():
     )
 
 
+def _escribir_csv_tolerante(ruta, encabezado, filas, etiqueta_log) -> bool:
+    """
+    Escribe un reporte CSV; si el archivo esta abierto en Excel u otro
+    programa (PermissionError), no crashea el script -- avisa con
+    claridad y sigue. Devuelve True si se pudo guardar.
+    """
+    try:
+        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
+            escritor = csv.writer(f, delimiter=";")
+            escritor.writerow(encabezado)
+            for fila in filas:
+                escritor.writerow(fila)
+        return True
+    except PermissionError:
+        logging.error(
+            "[%s] No se pudo guardar %s -- probablemente el archivo esta abierto en Excel u otro programa. "
+            "Cierralo y vuelve a correr el script para actualizarlo.",
+            etiqueta_log, ruta,
+        )
+        return False
+
+
 def encontrar_columna(encabezados, nombre_buscado):
     for idx, valor in enumerate(encabezados, start=1):
         if valor and str(valor).strip().lower() == nombre_buscado.strip().lower():
@@ -584,6 +606,27 @@ def _ruta_larga_segura(ruta: str) -> str:
     return ruta
 
 
+def _sanear_nombre(nombre: str) -> str:
+    """Quita caracteres invalidos para nombres de carpeta/archivo en Windows (incluidos espacios/puntos al final)."""
+    nombre = re.sub(r'[<>:"/\\|?*]', "_", nombre).strip(" .")
+    return nombre or "SinNombre"
+
+
+def _ruta_zip_saneada(destino_normalizado: str, nombre_miembro: str) -> str:
+    """
+    Construye la ruta de destino para un miembro de un zip, saneando
+    CADA segmento de la ruta (no solo el nombre final). Un nombre de
+    carpeta/archivo con espacios o puntos al final es valido DENTRO de
+    un zip, pero Windows lo maneja mal incluso con el prefijo de ruta
+    larga (\\\\?\\) al leerlo despues -- mejor nunca dejar que llegue a
+    crearse asi en el disco.
+    """
+    segmentos = [s for s in nombre_miembro.replace("\\", "/").split("/") if s not in ("", ".", "..")]
+    if not segmentos:
+        return destino_normalizado
+    return os.path.join(destino_normalizado, *(_sanear_nombre(s) for s in segmentos))
+
+
 def _copy2_ruta_segura(origen, destino, *, follow_symlinks=True):
     """Como shutil.copy2, pero pasando cada ruta por _ruta_larga_segura -- se usa como copy_function de shutil.copytree."""
     shutil.copy2(_ruta_larga_segura(str(origen)), _ruta_larga_segura(str(destino)), follow_symlinks=follow_symlinks)
@@ -822,12 +865,20 @@ def extraer_zip_en_carpeta(ruta_zip: Path, carpeta_destino: Path):
     """
     extraidos = 0
     fallidos = 0
+    destino_normalizado = os.path.normpath(os.path.abspath(str(carpeta_destino)))
     with zipfile.ZipFile(ruta_zip) as zf:
         for info in zf.infolist():
             if info.is_dir():
                 continue
+            ruta_destino = os.path.normpath(_ruta_zip_saneada(destino_normalizado, info.filename))
+            if not ruta_destino.startswith(destino_normalizado):
+                fallidos += 1
+                continue
+            ruta_destino_segura = _ruta_larga_segura(ruta_destino)
             try:
-                zf.extract(info, carpeta_destino)
+                os.makedirs(os.path.dirname(ruta_destino_segura), exist_ok=True)
+                with zf.open(info) as origen, open(ruta_destino_segura, "wb") as destino:
+                    shutil.copyfileobj(origen, destino)
                 extraidos += 1
             except Exception:
                 fallidos += 1
@@ -1491,12 +1542,10 @@ def procesar():
             logging.warning("   - %s: %d", estado, conteo_por_estado[estado])
 
         filas_reporte.sort(key=lambda t: t[0])
-        with open(ARCHIVO_REPORTE_FALTANTES, "w", newline="", encoding="utf-8-sig") as f:
-            escritor = csv.writer(f, delimiter=";")
-            escritor.writerow(["No.", "Cuenta", "Radicado", "Juzgado"])
-            for numero, cuenta, radicado, juzgado in filas_reporte:
-                escritor.writerow([numero, cuenta, radicado, juzgado])
-        logging.info("[Faltan por agregar] Reporte guardado en: %s", ARCHIVO_REPORTE_FALTANTES)
+        if _escribir_csv_tolerante(
+            ARCHIVO_REPORTE_FALTANTES, ["No.", "Cuenta", "Radicado", "Juzgado"], filas_reporte, "Faltan por agregar"
+        ):
+            logging.info("[Faltan por agregar] Reporte guardado en: %s", ARCHIVO_REPORTE_FALTANTES)
 
     if sin_proceso_en_excel:
         logging.warning("[Sin proceso] %d carpeta(s) con radicado que no aparece en el Excel:", len(sin_proceso_en_excel))
@@ -1568,12 +1617,14 @@ def procesar():
             else:
                 logging.warning("   - '%s': vacia y sin radicado reconocible en el nombre.", nombre)
 
-    with open(ARCHIVO_REPORTE_VACIAS, "w", newline="", encoding="utf-8-sig") as f:
-        escritor = csv.writer(f, delimiter=";")
-        escritor.writerow(["Carpeta", "Radicado", "Zip pendiente encontrado", "Donde se encontro"])
-        for nombre, radicado_buscado, zip_encontrado, zip_ubicacion in carpetas_vacias:
-            escritor.writerow([nombre, radicado_buscado or "", zip_encontrado or "", zip_ubicacion or ""])
-    if carpetas_vacias:
+    filas_vacias = [
+        (nombre, radicado_buscado or "", zip_encontrado or "", zip_ubicacion or "")
+        for nombre, radicado_buscado, zip_encontrado, zip_ubicacion in carpetas_vacias
+    ]
+    if _escribir_csv_tolerante(
+        ARCHIVO_REPORTE_VACIAS, ["Carpeta", "Radicado", "Zip pendiente encontrado", "Donde se encontro"],
+        filas_vacias, "Carpeta vacia",
+    ) and carpetas_vacias:
         logging.info("[Carpeta vacia] Reporte guardado en: %s", ARCHIVO_REPORTE_VACIAS)
 
     if contenido_no_corresponde:
@@ -1589,12 +1640,10 @@ def procesar():
                 nombre, radicado_esperado, radicado_encontrado, veces,
             )
 
-    with open(ARCHIVO_REPORTE_CONTENIDO, "w", newline="", encoding="utf-8-sig") as f:
-        escritor = csv.writer(f, delimiter=";")
-        escritor.writerow(["Carpeta", "Radicado del nombre", "Radicado encontrado en el contenido", "Veces"])
-        for nombre, radicado_esperado, radicado_encontrado, veces in contenido_no_corresponde:
-            escritor.writerow([nombre, radicado_esperado, radicado_encontrado, veces])
-    if contenido_no_corresponde:
+    if _escribir_csv_tolerante(
+        ARCHIVO_REPORTE_CONTENIDO, ["Carpeta", "Radicado del nombre", "Radicado encontrado en el contenido", "Veces"],
+        contenido_no_corresponde, "Contenido no corresponde",
+    ) and contenido_no_corresponde:
         logging.info("[Contenido no corresponde] Reporte guardado en: %s", ARCHIVO_REPORTE_CONTENIDO)
 
     if duplicados_sin_resolver:
