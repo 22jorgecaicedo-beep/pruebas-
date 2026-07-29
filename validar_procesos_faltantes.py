@@ -2,16 +2,22 @@
 Valida UNICAMENTE las carpetas de los procesos que aparecen en la lista
 de faltantes (procesos_faltantes_en_disco.csv, la genera
 validar_renombrar_carpetas.py) -- de los que YA tengan carpeta en el
-disco (por ejemplo porque buscar_faltantes_en_drive.py ya los bajo),
-revisa que:
+disco (por ejemplo porque buscar_faltantes_en_drive.py ya los bajo).
 
-  1. Solo tengan documentos de SU PROPIO proceso -- ningun archivo
-     mezclado de otro proceso con un radicado corto parecido (ver
-     revisar_contaminacion_en_disco en buscar_faltantes_en_drive.py) ni
-     con un demandado distinto al que dice el Excel (ver
-     revisar_demandado_en_disco).
-  2. Sus documentos queden en ORDEN CRONOLOGICO, numerados "1. ", "2. ",
-     etc (el mas viejo primero; ver ordenar_y_enumerar_carpeta).
+Por defecto (REVISAR_CONTAMINACION_Y_DEMANDADO = False), lo UNICO que
+hace es ordenar cronologicamente los documentos que YA estan adentro
+de cada carpeta de la lista, numerandolos "1. ", "2. ", etc (el mas
+viejo primero; ver ordenar_y_enumerar_carpeta) -- no mueve NADA entre
+carpetas, no fusiona nada, no toca ninguna otra carpeta del disco.
+
+Si ademas quieres que revise que cada carpeta solo tenga documentos de
+SU PROPIO proceso (sacando archivos mezclados de otro proceso con
+radicado parecido, o de un demandado distinto al del Excel -- ver
+revisar_contaminacion_en_disco/revisar_demandado_en_disco en
+buscar_faltantes_en_drive.py), pon
+REVISAR_CONTAMINACION_Y_DEMANDADO = True mas abajo. Esas dos revisiones
+SI pueden mover archivos (nunca los borran, los mueven a
+Duplicados_para_revisar) -- por eso quedan apagadas por defecto.
 
 IMPORTANTE: corre primero validar_renombrar_carpetas.py (para que
 procesos_faltantes_en_disco.csv este al dia) antes de correr este
@@ -26,14 +32,8 @@ disco (no solo estas), esa ya la hace buscar_faltantes_en_drive.py
 al empezar cada corrida (consolidar_duplicados_en_disco,
 revisar_contaminacion_en_disco, revisar_demandado_en_disco,
 ordenar_todas_las_carpetas_en_disco). Este script existe para cuando
-solo quieres validar rapido las de la lista de faltantes, sin esperar
+solo quieres ordenar rapido las de la lista de faltantes, sin esperar
 a que se revise el disco completo.
-
-Los archivos sospechosos (de otro proceso, o de otro demandado) se
-MUEVEN a Duplicados_para_revisar -- nunca se borran. Si una carpeta
-queda completamente vacia despues (todo era de otro proceso), esa
-carpeta VACIA si se borra, para que buscar_faltantes_en_drive.py la
-vuelva a buscar en la proxima corrida.
 
 Respeta MODO_PRUEBA (por defecto True): en modo prueba solo simula y
 te dice que haria, sin mover ni renombrar nada todavia.
@@ -54,6 +54,14 @@ ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "validar_procesos_faltante
 # True (por defecto): no mueve ni renombra nada de verdad, solo revisa y
 # muestra que haria. False: aplica los cambios de verdad.
 MODO_PRUEBA = True
+
+# False (por defecto): este script SOLO ordena cronologicamente los
+# documentos que ya estan adentro de cada carpeta de la lista -- no
+# mueve nada entre carpetas, no toca ninguna otra carpeta del disco.
+# True: ademas revisa contaminacion entre procesos y demandado
+# equivocado (puede MOVER archivos sospechosos a Duplicados_para_revisar,
+# nunca los borra -- ver el modulo docstring arriba).
+REVISAR_CONTAMINACION_Y_DEMANDADO = False
 
 # ===========================================================================
 
@@ -92,7 +100,8 @@ def procesar():
     # revisar_contaminacion_en_disco/revisar_demandado_en_disco (en
     # buscar_faltantes_en_drive.py) leen el MODO_PRUEBA de ESE modulo,
     # no el de este script -- se sincroniza para que respeten el mismo
-    # flag configurado aqui arriba.
+    # flag configurado aqui arriba (solo importa si
+    # REVISAR_CONTAMINACION_Y_DEMANDADO esta en True).
     bfd.MODO_PRUEBA = MODO_PRUEBA
 
     faltantes = bfd.leer_faltantes()
@@ -122,14 +131,20 @@ def procesar():
         logging.info("No hay ninguna carpeta de la lista de faltantes para validar todavia.")
         return
 
-    bfd.revisar_contaminacion_en_disco(carpetas_objetivo)
-    bfd.revisar_demandado_en_disco(carpetas_objetivo)
+    if REVISAR_CONTAMINACION_Y_DEMANDADO:
+        bfd.revisar_contaminacion_en_disco(carpetas_objetivo)
+        bfd.revisar_demandado_en_disco(carpetas_objetivo)
+    else:
+        logging.info(
+            "(REVISAR_CONTAMINACION_Y_DEMANDADO esta en False -- no se revisa si hay archivos mezclados de "
+            "otro proceso/demandado, solo se ordenan cronologicamente los documentos que ya estan en cada "
+            "carpeta. Ninguna carpeta se toca aparte de las de la lista de faltantes.)"
+        )
 
     if MODO_PRUEBA:
         logging.info(
-            "MODO_PRUEBA esta activo: arriba se simulo lo que se moveria, pero no se ordeno/renumero ni se "
-            "movio nada todavia. Revisa el log y, si se ve bien, cambia MODO_PRUEBA = False al inicio de este "
-            "script y vuelve a correrlo."
+            "MODO_PRUEBA esta activo: no se ordeno/renumero ni se movio nada todavia. Revisa el log y, si se "
+            "ve bien, cambia MODO_PRUEBA = False al inicio de este script y vuelve a correrlo."
         )
         return
 

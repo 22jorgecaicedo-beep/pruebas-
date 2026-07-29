@@ -608,17 +608,24 @@ están en `procesos_faltantes_en_disco.csv` (los que ya bajó
 `buscar_faltantes_en_drive.py`, u otros que hayas agregado a mano) --
 sin esperar a que se revise el disco completo.
 
-Para cada proceso de esa lista que **ya tenga carpeta** en el disco,
-revisa:
+Para cada proceso de esa lista que **ya tenga carpeta** en el disco:
 
-1. **Que solo tenga documentos de su propio proceso** -- ningún archivo
-   mezclado de otro proceso con un radicado corto parecido, ni con un
-   demandado distinto al que dice el Excel (las mismas revisiones de
-   `buscar_faltantes_en_drive.py` -- ver "Revisión de contaminación
-   entre procesos" y "Revisión de demandado entre procesos" más
-   arriba -- pero aplicadas SOLO a estas carpetas, no a todo el disco).
-2. **Que sus documentos queden en orden cronológico**, numerados `1. `,
-   `2. `, etc.
+**Por defecto** (`REVISAR_CONTAMINACION_Y_DEMANDADO = False`), lo
+**único** que hace es **ordenar cronológicamente** los documentos que
+YA están adentro de cada carpeta, numerándolos `1. `, `2. `, etc -- no
+mueve nada entre carpetas, no fusiona nada, no toca ninguna otra
+carpeta del disco.
+
+Si además quieres que revise que cada carpeta **solo tenga documentos
+de su propio proceso** -- sacando archivos mezclados de otro proceso
+con un radicado corto parecido, o de un demandado distinto al que dice
+el Excel (las mismas revisiones de `buscar_faltantes_en_drive.py` --
+ver "Revisión de contaminación entre procesos" y "Revisión de
+demandado entre procesos" más arriba, pero aplicadas SOLO a estas
+carpetas) -- pon `REVISAR_CONTAMINACION_Y_DEMANDADO = True` al inicio
+del script. Esas dos revisiones **sí pueden mover archivos** (nunca los
+borran, los mueven a `Duplicados_para_revisar`) -- por eso quedan
+apagadas por defecto.
 
 Los procesos de la lista que **todavía no tengan carpeta** en el disco
 se cuentan aparte y se omiten -- este script **no descarga nada** (para
@@ -633,12 +640,10 @@ Uso:
    `procesos_faltantes_en_disco.csv` esté al día.
 2. Corre `python validar_procesos_faltantes.py`.
 3. Por defecto corre en `MODO_PRUEBA = True` (solo revisa y te dice qué
-   movería/ordenaría). Cambia `MODO_PRUEBA = False` al inicio del
-   script para aplicar los cambios de verdad.
+   ordenaría). Cambia `MODO_PRUEBA = False` al inicio del script para
+   aplicar los cambios de verdad.
 
-Como con el resto de los scripts, los archivos sospechosos se mueven a
-`Duplicados_para_revisar` -- **nunca se borran**. Todo queda registrado
-en `validar_procesos_faltantes.log`.
+Todo queda registrado en `validar_procesos_faltantes.log`.
 
 ## Si algo falla
 
