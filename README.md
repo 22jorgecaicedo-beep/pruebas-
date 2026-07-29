@@ -663,6 +663,52 @@ Uso:
 
 Todo queda registrado en `validar_procesos_faltantes.log`.
 
+## Crear carpetas de procesos terminados/remitidos/no iniciados
+
+`validar_renombrar_carpetas.py` solo organiza los procesos en los
+estados de `ESTADOS_A_CONTAR` (`ACTIVO`, `ACTIVOS CON TITULOS`,
+`SUSPENDIDO`, `REORGANIZACION`). Para los procesos en cualquier OTRO
+estado -- terminados (por pago, por auto, por prepago, con contrato,
+etc), remitidos (a castigo, a prepago, etc), o que nunca llegaron a
+iniciarse -- usa `crear_carpetas_terminados_castigo.py`.
+
+Estos procesos normalmente no tienen (o no importa) un radicado real
+para organizar documentos -- son más un registro administrativo que un
+expediente judicial activo -- así que la carpeta **no** se nombra
+`"numero. radicado"` como el resto del proyecto, sino:
+
+- Si el `ESTADO PROCESAL` empieza con **`TERMINADO`** (por pago, por
+  auto, por prepago, con contrato, etc): `"<numero>. <ESTADO PROCESAL
+  EXACTO del Excel>"` -- ej. `"123. TERMINADO POR AUTO"`.
+- Si el `ESTADO PROCESAL` empieza con **`REMITIDA`** (a castigo, a
+  prepago, etc) o con **`NO INICIO`**: **solo el número** -- ej.
+  `"145."`.
+
+Los procesos con un `ESTADO PROCESAL` que no encaje en ninguna de esas
+dos reglas (ej. `"DESISTIMIENTO DE PRETENSIONES"`, `"DEVUELTA INCURRIO
+EN GASTOS"`) se dejan **fuera a propósito** -- no se crea carpeta para
+ellos, y quedan listados en el log para que decidas qué hacer.
+
+Si **ya existe** una carpeta en el disco para ese número (cualquier
+nombre que empiece por `"<numero>. "` o sea exactamente `"<numero>."`
+-- por ejemplo porque el proceso ya se organizó de la forma normal con
+su radicado real), **no se crea una nueva**. Este script nunca borra,
+renombra ni mueve nada -- solo **crea** carpetas vacías nuevas donde
+todavía no exista ninguna para ese número. Correrlo varias veces no
+duplica nada.
+
+Uso:
+
+1. Haz doble clic en `crear_carpetas_terminados_castigo.bat` (o corre
+   `python crear_carpetas_terminados_castigo.py`).
+2. Por defecto corre en `MODO_PRUEBA = True` (solo revisa y te dice qué
+   carpetas crearía). Cambia `MODO_PRUEBA = False` al inicio del script
+   para crearlas de verdad.
+
+Usa la misma configuración (`RUTA_EXCEL`, `CARPETA_PROCESOS`, etc) que
+`validar_renombrar_carpetas.py` -- no hay que configurarla dos veces.
+Todo queda registrado en `crear_carpetas_terminados_castigo.log`.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
