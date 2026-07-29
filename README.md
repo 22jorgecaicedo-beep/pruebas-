@@ -415,9 +415,19 @@ el orden en que ya estaban. Si el proceso está repartido en
 subcarpetas (ej. "principal" y "anexos"), cada una se ordena por su
 cuenta, sin mezclar los documentos de una con los de otra. Si vuelves a
 correr el script y llega un documento más viejo que los demás, el
-orden se recalcula solo. Solo se ordenan las carpetas que se acaban de
-descargar/fusionar en esa corrida -- no toca carpetas que ya estaban
-en el disco de antes.
+orden se recalcula solo. Además de las carpetas que se acaban de
+descargar/fusionar en esta corrida, **al empezar cada corrida también
+se revisan y ordenan TODAS las carpetas de proceso que ya existan en el
+disco** (de esta corrida o de cualquier corrida anterior) -- no hace
+falta que el proceso se haya tocado hoy para que quede numerado.
+
+**Solo se descargan archivos PDF:** cualquier otro tipo de archivo
+(Word, Excel, imágenes, etc) que aparezca junto a los PDF -- ya sea
+dentro de una carpeta de Drive o de un adjunto `.zip` de correo -- se
+omite y **nunca** se baja al disco. La única excepción son los
+archivos nativos de Google (Doc, Sheet, Slide), que sí se descargan
+pero **exportados como PDF** (Drive los convierte automáticamente al
+exportarlos, así que igual terminan como `.pdf` en el disco).
 
 **Si un archivo puntual falla al descargarlo** (ruta demasiado larga
 para Windows, permisos, antivirus, un corte de red momentáneo), el

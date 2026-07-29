@@ -78,8 +78,17 @@ Al terminar de descargar/fusionar cada proceso, ordena sus documentos
 CRONOLOGICAMENTE y les antepone un numero de orden: "1. ", "2. ", etc
 (el mas viejo primero; los que no tengan una fecha reconocible en su
 nombre o contenido quedan al final). Ver ordenar_y_enumerar_carpeta().
-Solo se ordenan las carpetas que se acaban de tocar en ESTA corrida --
-las que ya estaban en el disco de antes no se tocan.
+Ademas, al empezar cada corrida, TODAS las carpetas de proceso que ya
+existan en el disco (de esta corrida o de cualquier corrida anterior)
+tambien se revisan y se ordenan/enumeran de la misma forma -- no hace
+falta que el proceso se haya tocado hoy. Ver
+ordenar_todas_las_carpetas_en_disco().
+
+Solo se descargan archivos PDF (o archivos nativos de Google -- Doc,
+Sheet, Slide -- que Drive exporta como PDF). Cualquier otro tipo de
+archivo (Word, Excel, imagenes, etc) que aparezca junto a los PDF en
+Drive o dentro de un adjunto .zip de correo se omite y NUNCA se baja
+al disco. Ver _es_pdf_o_exportable().
 
 Requiere:
   - credenciales_drive.json: credenciales de OAuth de Google Drive (ver
@@ -443,6 +452,8 @@ def descargar_carpeta_drive(servicio, folder_id: str, destino: Path) -> int:
                     descargados += 1
                 elif item["mimeType"].startswith("application/vnd.google-apps."):
                     logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
+                elif not _es_pdf_o_exportable(item):
+                    logging.info("   (se omite '%s': no es un PDF, solo se descargan PDF)", item["name"])
                 else:
                     _descargar_archivo_binario(servicio, item["id"], ruta_local)
                     descargados += 1
@@ -477,6 +488,8 @@ def _descargar_archivos_sueltos(servicio, archivos, destino: Path) -> int:
                 descargados += 1
             elif item["mimeType"].startswith("application/vnd.google-apps."):
                 logging.warning("   (se omite '%s': tipo de Google no descargable directo)", item["name"])
+            elif not _es_pdf_o_exportable(item):
+                logging.info("   (se omite '%s': no es un PDF, solo se descargan PDF)", item["name"])
             else:
                 _descargar_archivo_binario(servicio, item["id"], ruta_local)
                 descargados += 1
@@ -606,8 +619,15 @@ def _carpeta_es_dedicada_al_caso(item, carpeta, radicado: str) -> bool:
     return any(_nombre_coincide(carpeta.get("name", ""), t) for t in terminos)
 
 
+def _es_pdf_o_exportable(item) -> bool:
+    """True si 'item' es un PDF de verdad, o un tipo de Google (Doc/Sheet/Slide) que se exporta como PDF -- ver MIME_EXPORTAR. Solo se descargan estos: nada mas."""
+    if item.get("mimeType") in MIME_EXPORTAR:
+        return True
+    return Path(item.get("name", "")).suffix.lower() == ".pdf"
+
+
 def _archivos_relacionados(servicio, carpeta, radicado: str):
-    """Archivos (no subcarpetas) de primer nivel de 'carpeta' cuyo NOMBRE mencione el radicado (completo o corto)."""
+    """Archivos PDF (no subcarpetas, no otros tipos) de primer nivel de 'carpeta' cuyo NOMBRE mencione el radicado (completo o corto)."""
     terminos = [radicado] + radicados_cortos(radicado)
     try:
         respuesta = servicio.files().list(
@@ -619,6 +639,7 @@ def _archivos_relacionados(servicio, carpeta, radicado: str):
     return [
         archivo for archivo in respuesta.get("files", [])
         if archivo.get("mimeType") != MIME_CARPETA
+        and _es_pdf_o_exportable(archivo)
         and any(_nombre_coincide(archivo.get("name", ""), t) for t in terminos)
     ]
 
@@ -1147,6 +1168,45 @@ def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
     return renombrados
 
 
+def ordenar_todas_las_carpetas_en_disco():
+    """
+    Ordena cronologicamente TODAS las carpetas de proceso que ya haya
+    en CARPETA_PROCESOS -- no solo las que se acaban de descargar o
+    fusionar en esta corrida (ver ordenar_y_enumerar_carpeta). Asi, una
+    carpeta que ya estaba en el disco de antes (de una corrida anterior
+    a que existiera este orden, o descargada por otro medio) tambien
+    queda numerada. Respeta MODO_PRUEBA (no toca nada si esta activo).
+    """
+    if MODO_PRUEBA:
+        return
+    carpeta_procesos = Path(CARPETA_PROCESOS)
+    if not carpeta_procesos.exists():
+        return
+    try:
+        carpetas = [
+            h for h in carpeta_procesos.iterdir()
+            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+        ]
+    except OSError:
+        return
+
+    total_renombrados = 0
+    for carpeta in carpetas:
+        if not cruce_excel.radicado_de_nombre_carpeta(carpeta.name):
+            continue
+        try:
+            total_renombrados += ordenar_y_enumerar_carpeta(carpeta)
+        except OSError as error:
+            logging.warning("   (no se pudo ordenar '%s': %s)", carpeta.name, error)
+
+    if total_renombrados:
+        logging.info(
+            "[Orden] %d documento(s), entre todas las carpetas de proceso del disco, se ordenaron "
+            "cronologicamente y se enumeraron (1., 2., ...).",
+            total_renombrados,
+        )
+
+
 def _radicado_ya_en_disco(radicado: str) -> bool:
     """
     True si ya existe una carpeta en CARPETA_PROCESOS para este radicado
@@ -1551,9 +1611,25 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
     temporal = carpeta_procesos / f"_tmp_extraccion_correo_{Path(nombre_zip).stem}_{id(contenido)}"
     try:
         extraidos, fallidos = cruce_excel.extraer_zip_en_carpeta(ruta_zip_temp, temporal)
-        if extraidos == 0:
+
+        # Solo interesan los PDF -- se borran (del TEMPORAL, nunca de una
+        # carpeta ya organizada) los que no lo sean, antes de decidir
+        # nada mas.
+        no_pdf_omitidos = 0
+        for archivo_extraido in temporal.rglob("*") if temporal.exists() else []:
+            if archivo_extraido.is_file() and archivo_extraido.suffix.lower() != ".pdf":
+                archivo_extraido.unlink(missing_ok=True)
+                no_pdf_omitidos += 1
+        if no_pdf_omitidos:
+            extraidos -= no_pdf_omitidos
+            logging.info(
+                "   (se omitieron %d archivo(s) del adjunto '%s' por no ser PDF -- solo se descargan PDF)",
+                no_pdf_omitidos, nombre_zip,
+            )
+
+        if extraidos <= 0:
             logging.warning(
-                "[Correo] El adjunto '%s' del correo '%s' no dejo ningun archivo al extraerlo -- se omite.",
+                "[Correo] El adjunto '%s' del correo '%s' no dejo ningun archivo PDF -- se omite.",
                 nombre_zip, asunto,
             )
             shutil.rmtree(temporal, ignore_errors=True)
@@ -1594,6 +1670,7 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
 def procesar():
     consolidar_duplicados_en_disco()
     revisar_contaminacion_en_disco()
+    ordenar_todas_las_carpetas_en_disco()
 
     faltantes = leer_faltantes()
     logging.info("Procesos faltantes a buscar: %d", len(faltantes))
