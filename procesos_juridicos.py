@@ -39,6 +39,15 @@ existia, se reemplaza por el nuevo (se asume que la descarga mas reciente
 es la vigente); si no existia, se agrega. Nunca se borra nada que ya
 estuviera ahi y no venga en la descarga nueva.
 
+Esa carpeta existente se reconoce aunque su radicado difiera del que trae
+el zip/expediente nuevo en el ULTIMO digito (el "consecutivo" de
+instancia/reparto, ej. termina en 0 o en 1 -- distintas fuentes a veces
+lo registran distinto sin ser un proceso diferente): si ya hay una
+carpeta en el disco cuyo radicado coincide en los primeros 22 digitos,
+se fusiona ahi (con su numero de proceso ya asignado), en vez de crear
+una carpeta nueva "sin numero" solo porque el radicado exacto no
+coincidio con nada. Ver _carpeta_existente_para_radicado().
+
 Antes de usarla, edita la seccion CONFIGURACION mas abajo y crea
 `credenciales_sgde.txt` (ver credenciales_sgde.example.txt) con tu correo
 y una Contrasena de aplicacion de Gmail.
@@ -235,7 +244,7 @@ def ruta_destino_disponible(carpeta_padre: str, nombre: str) -> str:
 
 # ==================== Cruce opcional con el informe de Excel ==================
 
-_CACHE_INFORME = {"mtime": None, "por_radicado": {}}
+_CACHE_INFORME = {"mtime": None, "por_radicado": {}, "filas": []}
 
 
 def _radicado_a_numero_proceso(radicado: str):
@@ -245,6 +254,13 @@ def _radicado_a_numero_proceso(radicado: str):
     si el informe no esta configurado/disponible o el radicado todavia no
     aparece ahi. Recarga el Excel solo cuando cambio en disco, para no
     releerlo en cada carpeta si llegan varias seguidas.
+
+    Si no hay coincidencia EXACTA, tambien prueba una coincidencia que
+    solo difiera en el ULTIMO digito (el "consecutivo" de
+    instancia/reparto -- ver mismo_radicado_salvo_ultimo_digito en
+    validar_renombrar_carpetas.py): el zip descargado puede traer ese
+    digito distinto al que quedo anotado en el informe sin ser, en
+    realidad, un proceso diferente.
     """
     if cruce_excel is None:
         return None
@@ -257,13 +273,27 @@ def _radicado_a_numero_proceso(radicado: str):
         try:
             filas, _filas_casi_validas = cruce_excel.leer_procesos_validos()
             _CACHE_INFORME["por_radicado"] = {radicado_fila: numero for _fila, numero, radicado_fila in filas}
+            _CACHE_INFORME["filas"] = filas
             _CACHE_INFORME["mtime"] = mtime_actual
             logging.info("[Informe] Leido %s (%d procesos) para cruzar radicados.", ruta, len(filas))
         except Exception:
             logging.exception("[Informe] No se pudo leer %s para cruzar el radicado.", ruta)
             return None
 
-    return _CACHE_INFORME["por_radicado"].get(radicado)
+    numero = _CACHE_INFORME["por_radicado"].get(radicado)
+    if numero is not None:
+        return numero
+
+    coincidencia = cruce_excel.buscar_coincidencia_ultimo_digito(radicado, _CACHE_INFORME["filas"])
+    if coincidencia:
+        _fila, numero_consecutivo, radicado_excel = coincidencia
+        logging.info(
+            "[Informe] El radicado %s (del zip) coincide con el proceso %s del informe (radicado %s) salvo "
+            "el ultimo digito -- es el mismo proceso (consecutivo de instancia/reparto), se usa ese numero.",
+            radicado, numero_consecutivo, radicado_excel,
+        )
+        return numero_consecutivo
+    return None
 
 
 def nombre_carpeta_con_numero_proceso(radicado: str) -> str:
@@ -279,6 +309,41 @@ def nombre_carpeta_con_numero_proceso(radicado: str) -> str:
             radicado,
         )
     return radicado
+
+
+def _carpeta_existente_para_radicado(radicado: str):
+    """
+    Busca en CARPETA_DESTINO una carpeta que ya corresponda a este
+    radicado (por ejemplo de una descarga anterior, o ya renombrada por
+    validar_renombrar_carpetas.py con su numero de proceso correcto):
+    primero una coincidencia EXACTA del radicado, y si no hay, una cuyo
+    radicado coincida en los primeros 22 digitos y solo difiera en el
+    ULTIMO (el "consecutivo" de instancia/reparto -- ver
+    mismo_radicado_salvo_ultimo_digito en validar_renombrar_carpetas.py):
+    es el mismo proceso, solo que el zip nuevo trae ese digito distinto
+    al que ya quedo anotado en la carpeta. Devuelve la ruta (str) de la
+    carpeta encontrada, o None si no hay ninguna.
+    """
+    if cruce_excel is None:
+        return None
+    try:
+        nombres_carpetas = os.listdir(CARPETA_DESTINO)
+    except OSError:
+        return None
+
+    coincidencia_consecutivo = None
+    for nombre_carpeta in nombres_carpetas:
+        ruta = os.path.join(CARPETA_DESTINO, nombre_carpeta)
+        if not os.path.isdir(ruta):
+            continue
+        radicado_carpeta = cruce_excel.radicado_de_nombre_carpeta(nombre_carpeta)
+        if not radicado_carpeta:
+            continue
+        if radicado_carpeta == radicado:
+            return ruta
+        if coincidencia_consecutivo is None and cruce_excel.mismo_radicado_salvo_ultimo_digito(radicado, radicado_carpeta):
+            coincidencia_consecutivo = ruta
+    return coincidencia_consecutivo
 
 
 def verificar_cruce_excel():
@@ -618,17 +683,30 @@ def procesar_zip_manual(ruta_zip: str):
             logging.info("[Manual] Radicado encontrado dentro de los documentos de %s: %s", nombre_zip, radicado)
 
     if radicado:
-        nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(radicado))
+        carpeta_existente = _carpeta_existente_para_radicado(radicado)
+        if carpeta_existente:
+            radicado_existente = cruce_excel.radicado_de_nombre_carpeta(os.path.basename(carpeta_existente)) if cruce_excel is not None else None
+            if radicado_existente and radicado_existente != radicado:
+                logging.info(
+                    "[Manual] El radicado %s (del zip) coincide con la carpeta existente '%s' salvo el ultimo "
+                    "digito (consecutivo de instancia/reparto) -- es el mismo proceso, se fusiona ahi.",
+                    radicado, os.path.basename(carpeta_existente),
+                )
+            destino_final = carpeta_existente
+        else:
+            destino_final = os.path.join(CARPETA_DESTINO, sanear_nombre(nombre_carpeta_con_numero_proceso(radicado)))
     else:
-        nombre_final = sanear_nombre(Path(ruta_zip).stem)
-        logging.warning("[Manual] No se encontro radicado en %s (ni en el nombre ni en el contenido). Se usara: %s", nombre_zip, nombre_final)
+        destino_final = os.path.join(CARPETA_DESTINO, sanear_nombre(Path(ruta_zip).stem))
+        logging.warning(
+            "[Manual] No se encontro radicado en %s (ni en el nombre ni en el contenido). Se usara: %s",
+            nombre_zip, os.path.basename(destino_final),
+        )
 
-    destino_final = os.path.join(CARPETA_DESTINO, nombre_final)
     if os.path.exists(destino_final):
         copiados = fusionar_carpeta_en_destino(carpeta_extraida, destino_final)
         logging.info(
             "[Manual] '%s' ya tenia carpeta; se agregaron/reemplazaron %d archivo(s) en: %s",
-            nombre_final, copiados, destino_final,
+            os.path.basename(destino_final), copiados, destino_final,
         )
     else:
         shutil.move(_ruta_larga_segura(carpeta_extraida), _ruta_larga_segura(destino_final))
@@ -927,8 +1005,18 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
       - moviendo tal cual la estructura reconstruida archivo por archivo
         (caso de carpetas sin flecha).
     """
-    nombre_final = sanear_nombre(nombre_carpeta_con_numero_proceso(expediente))
-    destino_final = os.path.join(CARPETA_DESTINO, nombre_final)
+    carpeta_existente = _carpeta_existente_para_radicado(expediente)
+    if carpeta_existente:
+        radicado_existente = cruce_excel.radicado_de_nombre_carpeta(os.path.basename(carpeta_existente)) if cruce_excel is not None else None
+        if radicado_existente and radicado_existente != expediente:
+            logging.info(
+                "[SGDE] El expediente %s coincide con la carpeta existente '%s' salvo el ultimo digito "
+                "(consecutivo de instancia/reparto) -- es el mismo proceso, se fusiona ahi.",
+                expediente, os.path.basename(carpeta_existente),
+            )
+        destino_final = carpeta_existente
+    else:
+        destino_final = os.path.join(CARPETA_DESTINO, sanear_nombre(nombre_carpeta_con_numero_proceso(expediente)))
     ya_existia = os.path.exists(destino_final)
     contenidos = os.listdir(carpeta_temp)
 
