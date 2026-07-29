@@ -406,10 +406,13 @@ que de verdad mencionen el radicado (y, si aplica, al demandante ESSA).
 **Orden cronológico automático:** al terminar de descargar/fusionar
 cada proceso, sus documentos quedan ordenados por FECHA y numerados
 `1. `, `2. `, etc (el más viejo primero). La fecha se busca primero en
-el NOMBRE del archivo, y si no la trae, se abre su contenido (PDF/DOCX)
-para buscarla ahí; los documentos sin ninguna fecha reconocible quedan
-al final, en el orden en que ya estaban. Si el proceso está repartido
-en subcarpetas (ej. "principal" y "anexos"), cada una se ordena por su
+el NOMBRE del archivo, y si no la trae, se abren sus primeras páginas
+(PDF/DOCX) para buscarla ahí -- pero como máximo en 20 archivos por
+carpeta, para no quedarse abriendo PDF tras PDF en una carpeta grande
+(ej. fusionada de varios candidatos, con 70+ archivos). Los documentos
+sin fecha reconocible (o que superaron ese límite) quedan al final, en
+el orden en que ya estaban. Si el proceso está repartido en
+subcarpetas (ej. "principal" y "anexos"), cada una se ordena por su
 cuenta, sin mezclar los documentos de una con los de otra. Si vuelves a
 correr el script y llega un documento más viejo que los demás, el
 orden se recalcula solo. Solo se ordenan las carpetas que se acaban de

@@ -898,19 +898,36 @@ def _quitar_prefijo_orden(nombre: str) -> str:
     return _PATRON_PREFIJO_ORDEN.sub("", nombre, count=1)
 
 
-def _fecha_de_archivo(ruta: Path):
-    """
-    Fecha de 'ruta' para ordenarla cronologicamente: primero se busca
-    en su NOMBRE (sin el prefijo de orden de una corrida anterior, si
-    lo tenia); si no hay ninguna ahi, se abre su contenido (solo PDF/DOCX)
-    y se busca en el texto. Devuelve un datetime.date, o None si no se
-    encontro ninguna fecha en ningun lado.
-    """
-    fecha = _fecha_en_texto(_quitar_prefijo_orden(ruta.name))
-    if fecha:
-        return fecha
+# La fecha de un documento casi siempre esta en el encabezado -- para
+# buscarla en el CONTENIDO alcanza con las primeras paginas; leer un
+# PDF COMPLETO (puede tener decenas/cientos de paginas, sobre todo si
+# es un escaneo) seria demasiado lento para una carpeta con muchos
+# archivos sin fecha en el nombre.
+MAX_PAGINAS_CONTENIDO_PARA_FECHA = 2
+
+# Cuantos archivos, como maximo, se abren para buscarles la fecha en
+# el CONTENIDO dentro de una misma carpeta -- el resto, si tampoco
+# tiene fecha en el nombre, se deja al final sin abrir nada. Sin este
+# limite, una carpeta grande (fusionada de varios candidatos, ej. 70+
+# archivos) podia dejar el script "pegado" abriendo PDF tras PDF.
+MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR = 20
+
+
+def _fecha_de_nombre(ruta: Path):
+    """Fecha de 'ruta' buscada solo en su NOMBRE (sin el prefijo de orden de una corrida anterior, si lo tenia)."""
+    return _fecha_en_texto(_quitar_prefijo_orden(ruta.name))
+
+
+def _fecha_de_contenido(ruta: Path):
+    """Fecha de 'ruta' buscada en las primeras paginas de su contenido (solo PDF/DOCX). Ver MAX_PAGINAS_CONTENIDO_PARA_FECHA."""
     if ruta.suffix.lower() == ".pdf":
-        texto = cruce_excel._texto_de_pdf(ruta)
+        if PdfReader is None:
+            return None
+        try:
+            lector = PdfReader(str(ruta))
+            texto = "\n".join((pagina.extract_text() or "") for pagina in lector.pages[:MAX_PAGINAS_CONTENIDO_PARA_FECHA])
+        except Exception:
+            return None
     elif ruta.suffix.lower() == ".docx":
         texto = cruce_excel._texto_de_docx(ruta)
     else:
@@ -922,11 +939,13 @@ def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
     """
     Dentro de 'carpeta' (y cada una de sus subcarpetas, cada una por su
     cuenta -- nunca se mueven archivos de una subcarpeta a otra), ordena
-    los archivos por FECHA (ver _fecha_de_archivo: primero el nombre, y
-    si no hay se abre el contenido) de mas viejo a mas nuevo, y les
-    antepone un numero de orden: "1. ", "2. ", etc. Los archivos sin
-    fecha reconocible en ningun lado quedan al final, en el orden en
-    que ya estaban.
+    los archivos por FECHA (primero el nombre, ver _fecha_de_nombre; y
+    si no hay, hasta MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR archivos por
+    carpeta pueden abrirse para buscarla en sus primeras paginas, ver
+    _fecha_de_contenido) de mas viejo a mas nuevo, y les antepone un
+    numero de orden: "1. ", "2. ", etc. Los archivos sin fecha
+    reconocible (o que superaron ese limite) quedan al final, en el
+    orden en que ya estaban.
 
     Si se corre varias veces sobre la misma carpeta, primero quita
     cualquier prefijo de orden que le haya puesto una corrida anterior
@@ -951,8 +970,12 @@ def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
 
     con_fecha = []
     sin_fecha = []
+    archivos_contenido_revisados = 0
     for archivo in archivos:
-        fecha = _fecha_de_archivo(archivo)
+        fecha = _fecha_de_nombre(archivo)
+        if not fecha and archivos_contenido_revisados < MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR:
+            fecha = _fecha_de_contenido(archivo)
+            archivos_contenido_revisados += 1
         (con_fecha if fecha else sin_fecha).append((fecha, archivo))
     con_fecha.sort(key=lambda par: par[0])
     orden_final = [archivo for _fecha, archivo in con_fecha] + [archivo for _fecha, archivo in sin_fecha]
