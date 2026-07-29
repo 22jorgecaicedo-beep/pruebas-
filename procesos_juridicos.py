@@ -406,8 +406,12 @@ def fusionar_carpeta_en_destino(origen, destino) -> int:
     destino, se REEMPLAZA por el que se acaba de descargar (se asume
     que la descarga mas reciente es la vigente); si no existe, se
     agrega. NUNCA borra archivos que ya estuvieran en destino y no
-    vengan en 'origen'. Al terminar, borra 'origen' (era temporal, ya
-    quedo todo copiado). Devuelve cuantos archivos se copiaron en total.
+    vengan en 'origen'. Si un archivo puntual falla al copiarlo (ruta
+    demasiado larga para Windows, permisos, antivirus), se salta con
+    una advertencia y se sigue con el resto -- un solo archivo
+    problematico no debe dejar sin fusionar todo lo demas. Al terminar,
+    borra 'origen' (era temporal, ya quedo todo lo que se pudo copiar).
+    Devuelve cuantos archivos se copiaron en total.
     """
     origen = Path(origen)
     destino = Path(destino)
@@ -417,9 +421,16 @@ def fusionar_carpeta_en_destino(origen, destino) -> int:
             continue
         relativo = ruta.relative_to(origen)
         destino_archivo = destino / relativo
-        destino_archivo.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(ruta), str(destino_archivo))
-        copiados += 1
+        try:
+            destino_archivo.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_ruta_larga_segura(str(ruta)), _ruta_larga_segura(str(destino_archivo)))
+            copiados += 1
+        except OSError as error:
+            logging.warning(
+                "   (no se pudo fusionar '%s' en '%s' -- probablemente la ruta es demasiado larga para "
+                "Windows, o hay un problema de permisos/antivirus; se omite y se sigue con el resto: %s)",
+                relativo, destino, error,
+            )
     shutil.rmtree(str(origen), ignore_errors=True)
     return copiados
 
@@ -547,7 +558,7 @@ def mover_zip_a_procesados(ruta_zip: str):
     carpeta_procesados = os.path.join(os.path.dirname(ruta_zip), "Procesados")
     Path(carpeta_procesados).mkdir(exist_ok=True)
     destino = ruta_destino_disponible(carpeta_procesados, os.path.basename(ruta_zip))
-    shutil.move(ruta_zip, destino)
+    shutil.move(_ruta_larga_segura(ruta_zip), _ruta_larga_segura(destino))
 
 
 def procesar_zip_manual(ruta_zip: str):
@@ -607,7 +618,7 @@ def procesar_zip_manual(ruta_zip: str):
             nombre_final, copiados, destino_final,
         )
     else:
-        shutil.move(carpeta_extraida, destino_final)
+        shutil.move(_ruta_larga_segura(carpeta_extraida), _ruta_larga_segura(destino_final))
         logging.info("[Manual] Proceso organizado en: %s (%d archivo(s))", destino_final, archivos_extraidos)
 
     mover_zip_a_procesados(ruta_zip)
@@ -940,7 +951,7 @@ def organizar_descarga_sgde(carpeta_temp: str, expediente: str) -> str:
             expediente, copiados, destino_final,
         )
     else:
-        shutil.move(carpeta_temp, destino_final)
+        shutil.move(_ruta_larga_segura(carpeta_temp), _ruta_larga_segura(destino_final))
         aplanar_carpeta_anidada_unica(destino_final)
 
     return destino_final

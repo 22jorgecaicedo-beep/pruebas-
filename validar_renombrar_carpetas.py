@@ -584,6 +584,11 @@ def _ruta_larga_segura(ruta: str) -> str:
     return ruta
 
 
+def _copy2_ruta_segura(origen, destino, *, follow_symlinks=True):
+    """Como shutil.copy2, pero pasando cada ruta por _ruta_larga_segura -- se usa como copy_function de shutil.copytree."""
+    shutil.copy2(_ruta_larga_segura(str(origen)), _ruta_larga_segura(str(destino)), follow_symlinks=follow_symlinks)
+
+
 def contar_archivos(carpeta: Path) -> int:
     """Cuenta cuantos archivos de VERDAD (no basura de Windows, no carpetas) hay dentro de una carpeta, recursivamente."""
     try:
@@ -1136,7 +1141,18 @@ def procesar():
                         len(numeros_destino), numeros_destino,
                     )
                 else:
-                    shutil.copytree(ruta_origen_para_copiar, destino_copia)
+                    try:
+                        shutil.copytree(ruta_origen_para_copiar, destino_copia, copy_function=_copy2_ruta_segura)
+                    except (shutil.Error, OSError) as error:
+                        logging.error(
+                            "[Duplicado en Excel] No se pudo copiar '%s' como '%s' -- alguno de sus archivos "
+                            "probablemente tiene una ruta demasiado larga para Windows, o hay un problema de "
+                            "permisos/antivirus. Se omite esta copia (revisa y duplica esta a mano si hace "
+                            "falta): %s",
+                            ruta_origen_para_copiar.name, destino_copia.name, error,
+                        )
+                        shutil.rmtree(destino_copia, ignore_errors=True)
+                        continue
                     logging.info(
                         "[Duplicado en Excel] Se creo una copia de '%s' como '%s' (radicado %s duplicado en "
                         "el Excel con los procesos %s).",
@@ -1346,7 +1362,15 @@ def procesar():
                         carpeta.name, archivos_donante, NOMBRE_CARPETA_DUPLICADOS, donante.name, radicado_actual,
                     )
                 else:
-                    shutil.copytree(donante, carpeta, dirs_exist_ok=True)
+                    try:
+                        shutil.copytree(donante, carpeta, dirs_exist_ok=True, copy_function=_copy2_ruta_segura)
+                    except (shutil.Error, OSError) as error:
+                        logging.error(
+                            "[Vacia] No se pudo rellenar '%s' desde '%s/%s' -- alguno de sus archivos "
+                            "probablemente tiene una ruta demasiado larga para Windows, o hay un problema de "
+                            "permisos/antivirus. Puede haber quedado parcialmente copiada; revisala a mano: %s",
+                            carpeta.name, NOMBRE_CARPETA_DUPLICADOS, donante.name, error,
+                        )
                     aplanar_carpeta_anidada_unica(carpeta)
                     numero_archivos = contar_archivos(carpeta)
                     logging.info(

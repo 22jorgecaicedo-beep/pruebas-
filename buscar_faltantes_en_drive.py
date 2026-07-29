@@ -787,7 +787,14 @@ def consolidar_duplicados_en_disco():
                 carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
                 carpeta_duplicados.mkdir(parents=True, exist_ok=True)
                 destino_dup = cruce_excel.ruta_libre(carpeta_duplicados, carpeta.name)
-                shutil.move(str(carpeta), str(destino_dup))
+                try:
+                    shutil.move(organizador._ruta_larga_segura(str(carpeta)), organizador._ruta_larga_segura(str(destino_dup)))
+                except OSError as error:
+                    logging.warning(
+                        "   (no se pudo mover '%s' a %s -- se deja donde estaba: %s)",
+                        carpeta.name, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, error,
+                    )
+                    continue
                 movidos_a_revisar += 1
                 logging.info(
                     "[Revisar] '%s' (radicado %s) no menciona a ESSA/Electrificadora de Santander -- se movio a "
@@ -1029,9 +1036,11 @@ def _fusionar_sin_perder_nada(origen, destino) -> int:
     dos "01. INFORME 1") sin ser el mismo documento. Si se reemplazara
     en ese caso, se perderia contenido real. En vez de eso, si el
     nombre ya existe, el archivo que llega se guarda con un sufijo
-    libre (ver _ruta_archivo_libre) para quedarse con AMBOS. Al
-    terminar, borra 'origen' (era temporal). Devuelve cuantos archivos
-    se copiaron.
+    libre (ver _ruta_archivo_libre) para quedarse con AMBOS. Si un
+    archivo puntual falla al copiarlo (ruta demasiado larga para
+    Windows, permisos, antivirus), se salta con una advertencia y se
+    sigue con el resto. Al terminar, borra 'origen' (era temporal).
+    Devuelve cuantos archivos se copiaron.
     """
     origen = Path(origen)
     destino = Path(destino)
@@ -1041,11 +1050,18 @@ def _fusionar_sin_perder_nada(origen, destino) -> int:
             continue
         relativo = ruta.relative_to(origen)
         destino_archivo = destino / relativo
-        destino_archivo.parent.mkdir(parents=True, exist_ok=True)
-        if destino_archivo.exists():
-            destino_archivo = _ruta_archivo_libre(destino_archivo.parent, destino_archivo.name)
-        shutil.copy2(str(ruta), str(destino_archivo))
-        copiados += 1
+        try:
+            destino_archivo.parent.mkdir(parents=True, exist_ok=True)
+            if destino_archivo.exists():
+                destino_archivo = _ruta_archivo_libre(destino_archivo.parent, destino_archivo.name)
+            shutil.copy2(organizador._ruta_larga_segura(str(ruta)), organizador._ruta_larga_segura(str(destino_archivo)))
+            copiados += 1
+        except OSError as error:
+            logging.warning(
+                "   (no se pudo fusionar '%s' en '%s' -- probablemente la ruta es demasiado larga para "
+                "Windows, o hay un problema de permisos/antivirus; se omite y se sigue con el resto: %s)",
+                relativo, destino, error,
+            )
     shutil.rmtree(str(origen), ignore_errors=True)
     return copiados
 
@@ -1390,7 +1406,13 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
             carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
             carpeta_duplicados.mkdir(parents=True, exist_ok=True)
             destino_dup = cruce_excel.ruta_libre(carpeta_duplicados, f"{numero}. {radicado} - correo {Path(nombre_zip).stem}")
-            shutil.move(str(temporal), str(destino_dup))
+            try:
+                shutil.move(organizador._ruta_larga_segura(str(temporal)), organizador._ruta_larga_segura(str(destino_dup)))
+            except OSError as error:
+                logging.warning(
+                    "   (no se pudo mover el adjunto extraido de '%s' a %s -- se deja en %s: %s)",
+                    nombre_zip, cruce_excel.NOMBRE_CARPETA_DUPLICADOS, temporal, error,
+                )
             return
 
         destino, es_el_primero = _destino_compartido(numero, radicado, contexto)
