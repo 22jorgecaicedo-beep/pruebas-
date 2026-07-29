@@ -250,6 +250,18 @@ VALIDAR_CONTENIDO_CONTRA_NOMBRE = True
 # carpeta con muchos documentos, con unos pocos alcanza para verificar).
 MAX_ARCHIVOS_CONTENIDO_A_REVISAR = 5
 
+# Un PDF mas pesado que esto (en MB) NO se abre para leer su contenido --
+# se salta directo, como si no se hubiera podido leer. Un PDF con la
+# tabla de referencias cruzadas (xref) dañada obliga a pypdf a escanear
+# el archivo COMPLETO byte por byte para reconstruirla (se ve en el log
+# como una fila tras otra de "Ignoring wrong pointing object"); en un
+# escaneo pesado de cientos de MB eso puede tardar minutos por un solo
+# archivo y dejar el script "pegado" sin ningun aviso de que sigue
+# trabajando. Este limite evita ese caso -- no afecta los PDF normales
+# (la inmensa mayoria pesa unos pocos MB), solo a los pocos casos
+# extremos que se quedarian trabados.
+MAX_MB_PDF_PARA_CONTENIDO = 20
+
 # True: no renombra ni mueve nada, solo muestra/registra que haria
 # (recomendado la primera vez). False: aplica los cambios de verdad.
 MODO_PRUEBA = True
@@ -673,6 +685,13 @@ def _texto_de_pdf(ruta: Path) -> str:
     if PdfReader is None:
         return ""
     try:
+        if ruta.stat().st_size > MAX_MB_PDF_PARA_CONTENIDO * 1024 * 1024:
+            logging.info(
+                "   (se omite el contenido de '%s': pesa mas de %d MB -- probablemente un escaneo pesado con la "
+                "tabla de referencias dañada, que se demoraria mucho en leer; se sigue sin abrirlo)",
+                ruta.name, MAX_MB_PDF_PARA_CONTENIDO,
+            )
+            return ""
         lector = PdfReader(str(ruta))
         return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
     except Exception:

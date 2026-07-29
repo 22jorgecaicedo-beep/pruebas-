@@ -199,6 +199,17 @@ TERMINOS_DEMANDANTE_VALIDO = ["essa", "electrificadora de santander"]
 MAX_ARCHIVOS_CONTENIDO_A_REVISAR = 5
 EXTENSIONES_CONTENIDO_DRIVE = {".pdf", ".docx"}
 
+# Un PDF mas pesado que esto (en MB) NO se abre para leer su contenido --
+# se salta directo. Un PDF con la tabla de referencias cruzadas (xref)
+# dañada obliga a pypdf a escanear el archivo COMPLETO byte por byte
+# para reconstruirla (se ve en el log como fila tras fila de "Ignoring
+# wrong pointing object"); en un escaneo pesado de cientos de MB eso
+# puede tardar minutos por un solo archivo y dejar el script "pegado"
+# sin ningun aviso de que sigue trabajando. Aplica tanto a PDF locales
+# (_fecha_de_contenido) como a los descargados en memoria desde Drive
+# (_texto_de_archivo_drive).
+MAX_MB_PDF_PARA_CONTENIDO = 20
+
 # ===========================================================================
 
 
@@ -679,6 +690,13 @@ def _texto_de_archivo_drive(servicio, archivo) -> str:
         if extension == ".pdf":
             if PdfReader is None:
                 return ""
+            if buffer.getbuffer().nbytes > MAX_MB_PDF_PARA_CONTENIDO * 1024 * 1024:
+                logging.info(
+                    "   (se omite el contenido de '%s': pesa mas de %d MB -- probablemente un escaneo pesado "
+                    "con la tabla de referencias dañada, que se demoraria mucho en leer; se sigue sin abrirlo)",
+                    nombre, MAX_MB_PDF_PARA_CONTENIDO,
+                )
+                return ""
             lector = PdfReader(buffer)
             return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
         if docx is None:
@@ -1084,6 +1102,13 @@ def _fecha_de_contenido(ruta: Path):
         if PdfReader is None:
             return None
         try:
+            if ruta.stat().st_size > MAX_MB_PDF_PARA_CONTENIDO * 1024 * 1024:
+                logging.info(
+                    "   (se omite el contenido de '%s' para buscarle fecha: pesa mas de %d MB -- probablemente "
+                    "un escaneo pesado con la tabla de referencias dañada, que se demoraria mucho en leer)",
+                    ruta.name, MAX_MB_PDF_PARA_CONTENIDO,
+                )
+                return None
             lector = PdfReader(str(ruta))
             texto = "\n".join((pagina.extract_text() or "") for pagina in lector.pages[:MAX_PAGINAS_CONTENIDO_PARA_FECHA])
         except Exception:

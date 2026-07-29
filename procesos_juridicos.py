@@ -184,6 +184,15 @@ ESPERA_ESTABILIDAD_SEGUNDOS = 3
 INTERVALO_CHEQUEO_SEGUNDOS = 1
 MAX_INTENTOS_ESTABILIDAD = 120
 
+# Un PDF mas pesado que esto (en MB) NO se abre para leer su contenido --
+# se salta directo. Un PDF con la tabla de referencias cruzadas (xref)
+# dañada obliga a pypdf a escanear el archivo COMPLETO byte por byte
+# para reconstruirla (se ve en el log como fila tras fila de "Ignoring
+# wrong pointing object"); en un escaneo pesado de cientos de MB eso
+# puede tardar minutos por un solo archivo y dejar el programa "pegado"
+# sin ningun aviso de que sigue trabajando.
+MAX_MB_PDF_PARA_CONTENIDO = 20
+
 # Al arrancar, cuantos dias hacia atras de zips ya existentes en Descargas
 # se procesan (1 = solo los de hoy). Los zips nuevos que aparezcan mientras
 # el programa esta corriendo se procesan en tiempo real sin importar esto.
@@ -575,6 +584,13 @@ def extraer_zip(ruta_zip: str, carpeta_temp: str):
 
 def texto_de_pdf(ruta_pdf: str) -> str:
     try:
+        if os.path.getsize(ruta_pdf) > MAX_MB_PDF_PARA_CONTENIDO * 1024 * 1024:
+            logging.warning(
+                "PDF %s pesa mas de %d MB -- probablemente un escaneo pesado con la tabla de referencias "
+                "dañada, que se demoraria mucho en leer; se omite su contenido.",
+                ruta_pdf, MAX_MB_PDF_PARA_CONTENIDO,
+            )
+            return ""
         lector = PdfReader(ruta_pdf)
         return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
     except Exception as exc:
