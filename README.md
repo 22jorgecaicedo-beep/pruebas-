@@ -235,6 +235,18 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      dígitos del radicado y solo difieren en el último (el proceso ya
      cambió de instancia, ej. de "...00" a "...01") — esto **sí se
      corrige automático**, dejando el radicado del Excel.
+   - `[Duplicado en Excel]`: el mismo radicado aparece en **dos o más
+     filas** del Excel con números de proceso **distintos** (ej. proceso
+     19 y proceso 451 con exactamente el mismo radicado). En vez de
+     excluir esas filas del cruce, el script **duplica la carpeta**:
+     conserva/renombra la existente con el primer número, y crea una
+     copia completa (mismo contenido) por cada número adicional, para
+     que cada número de proceso tenga su propia carpeta
+     `"numero. radicado"`. Este caso también se reconoce **combinado**
+     con `[Consecutivo]`: si la carpeta suelta tiene el último dígito
+     distinto al del Excel, y ese radicado del Excel además está
+     repetido con varios números, se corrige el dígito **y** se duplica
+     para cada número, todo en la misma pasada.
    - `[POSIBLE COINCIDENCIA]`: la carpeta y el Excel difieren por un
      dígito de más o de menos en **otra** posición — esto **no** se
      corrige solo, se reporta para que lo confirmes a mano (dos procesos

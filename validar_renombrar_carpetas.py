@@ -57,6 +57,16 @@ modifica el Excel -- se asume que si el radicado esta dos veces a
 proposito, cada proceso necesita su copia. Al final se informa
 claramente cuales radicados se duplicaron y en que carpetas quedaron.
 
+Estos dos casos (consecutivo con ultimo digito distinto, y radicado
+repetido en el Excel) tambien se reconocen COMBINADOS: si una carpeta
+suelta en el disco tiene el radicado terminado en un digito distinto
+al del Excel, Y ADEMAS ese radicado (el del Excel) esta repetido con
+varios numeros de proceso, el script corrige el ultimo digito Y
+duplica la carpeta para cada numero -- antes esa combinacion no se
+reconocia por ninguno de los dos mecanismos (la tolerancia de
+consecutivo solo buscaba entre los radicados SIN repetir en el Excel),
+y la carpeta se quedaba sin cruzar con nada.
+
 Carpetas ANIDADAS (una carpeta de proceso metida DENTRO de otra carpeta
 de proceso, ej. "1014. radicado" dentro de "941. radicado"): tambien se
 resuelven solas, sin borrar ni fusionar contenido -- solo se mueve la
@@ -1210,9 +1220,34 @@ def procesar():
         # numeros de proceso DISTINTOS: se duplica la carpeta en vez de
         # tratarlo como conflicto (ver quitar_repetidos). ---
         entradas_duplicar = radicados_para_duplicar.get(radicado_en_carpeta)
+        radicado_duplicar_final = radicado_en_carpeta
+
+        if not entradas_duplicar:
+            # El radicado EXACTO de la carpeta no esta duplicado en el
+            # Excel -- pero puede que SI lo este bajo el mismo caso con
+            # el ultimo digito distinto (el "consecutivo" de
+            # instancia/reparto, ver mismo_radicado_salvo_ultimo_digito).
+            # Sin esto, una carpeta asi nunca encontraba su duplicado en
+            # el Excel: ni por coincidencia exacta (el radicado no es
+            # igual), ni por la tolerancia normal de consecutivo (esta
+            # busca solo entre los radicados SIN duplicar, y este SI
+            # esta duplicado, por eso quedaba excluido de ahi).
+            for radicado_excel_candidato, entradas_candidatas in radicados_para_duplicar.items():
+                if mismo_radicado_salvo_ultimo_digito(radicado_en_carpeta, radicado_excel_candidato):
+                    entradas_duplicar = entradas_candidatas
+                    radicado_duplicar_final = radicado_excel_candidato
+                    break
+
         if entradas_duplicar:
             numeros_destino = sorted(numero for _fila, numero in entradas_duplicar)
-            radicados_encontrados_en_disco.add(radicado_en_carpeta)
+            radicados_encontrados_en_disco.add(radicado_duplicar_final)
+
+            if radicado_duplicar_final != radicado_en_carpeta:
+                logging.info(
+                    "[Consecutivo] Carpeta '%s': el radicado termina distinto al del informe, que ademas "
+                    "tiene este mismo caso duplicado con los procesos %s; se corrige a '%s'.",
+                    radicado_en_carpeta, numeros_destino, radicado_duplicar_final,
+                )
 
             # Si ademas hay mas de una carpeta en el disco con este mismo
             # radicado, primero se consolida (se conserva la mas completa)
@@ -1223,7 +1258,7 @@ def procesar():
             otras = conteos[1:]
 
             primer_numero = numeros_destino[0]
-            nombre_origen_final = f"{primer_numero}. {radicado_en_carpeta}"
+            nombre_origen_final = f"{primer_numero}. {radicado_duplicar_final}"
 
             movidas = []
             for carpeta_extra, archivos_extra in otras:
@@ -1247,10 +1282,10 @@ def procesar():
                     movidos_a_auditar.append((carpeta_extra.name, destino_dup))
                 movidas.append((carpeta_extra.name, destino_dup.name))
             if movidas:
-                duplicados_resueltos.append((radicado_en_carpeta, nombre_origen_final, movidas))
+                duplicados_resueltos.append((radicado_duplicar_final, nombre_origen_final, movidas))
 
             renombro_ok = intentar_renombrar_carpeta(
-                carpeta_origen, primer_numero, radicado_en_carpeta, radicado_en_carpeta, reporte
+                carpeta_origen, primer_numero, radicado_duplicar_final, radicado_en_carpeta, reporte
             )
             if not renombro_ok:
                 # El conflicto ya quedo registrado por intentar_renombrar_carpeta;
@@ -1261,13 +1296,13 @@ def procesar():
             nombres_resultantes = [nombre_origen_final]
 
             for numero_extra in numeros_destino[1:]:
-                nombre_copia = f"{numero_extra}. {radicado_en_carpeta}"
+                nombre_copia = f"{numero_extra}. {radicado_duplicar_final}"
                 destino_copia = ruta_libre(carpeta_raiz, nombre_copia)
                 if MODO_PRUEBA:
                     logging.info(
                         "[SIMULACION-Duplicado en Excel] Se crearia una copia de '%s' como '%s' (el radicado "
                         "%s aparece %d veces en el Excel, con los procesos %s).",
-                        ruta_origen_para_copiar.name, destino_copia.name, radicado_en_carpeta,
+                        ruta_origen_para_copiar.name, destino_copia.name, radicado_duplicar_final,
                         len(numeros_destino), numeros_destino,
                     )
                 else:
@@ -1292,12 +1327,12 @@ def procesar():
                     logging.info(
                         "[Duplicado en Excel] Se creo una copia de '%s' como '%s' (radicado %s duplicado en "
                         "el Excel con los procesos %s).",
-                        ruta_origen_para_copiar.name, destino_copia.name, radicado_en_carpeta, numeros_destino,
+                        ruta_origen_para_copiar.name, destino_copia.name, radicado_duplicar_final, numeros_destino,
                     )
                     movidos_a_auditar.append((f"copia de '{ruta_origen_para_copiar.name}'", destino_copia))
                 nombres_resultantes.append(destino_copia.name)
 
-            duplicados_por_excel.append((radicado_en_carpeta, numeros_destino, nombres_resultantes))
+            duplicados_por_excel.append((radicado_duplicar_final, numeros_destino, nombres_resultantes))
             continue
 
         match = por_radicado.get(radicado_en_carpeta)
