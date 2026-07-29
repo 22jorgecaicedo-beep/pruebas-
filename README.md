@@ -735,6 +735,29 @@ quedan reportadas en el log con su fila y detalle:
 - **Estado sin clasificar**: no empieza con `TERMINADO`, `REMITIDA` ni
   `NO INICIO` (ver arriba).
 
+### Deshacer: borrar_carpetas_terminados_castigo.py
+
+Si te arrepientes y quieres borrar las carpetas placeholder que este
+script creo, usa `borrar_carpetas_terminados_castigo.py` (o su
+iniciador `borrar_carpetas_terminados_castigo.bat`). Funciona como un
+"deshacer":
+
+- Para cada número de proceso que **no** esté en `ESTADOS_A_CONTAR`
+  (o sea, cualquiera que no sea `ACTIVO`, `ACTIVOS CON TITULOS`,
+  `SUSPENDIDO` o `REORGANIZACION`), calcula el nombre exacto de
+  carpeta que `crear_carpetas_terminados_castigo.py` habría creado y,
+  **solo si existe una carpeta con exactamente ese nombre y está
+  completamente vacía**, la borra.
+- **Nunca** toca procesos activos/suspendidos/reorganización, números
+  duplicados en el Excel, estados sin clasificar, ni ninguna carpeta
+  que ya tenga contenido adentro (por ejemplo porque le agregaste
+  documentos a mano) -- esas se reportan en el log para que decidas a
+  mano.
+- ⚠️ Borrar una carpeta es **irreversible**. Respeta `MODO_PRUEBA`
+  (por defecto `True`): revisa el log primero, y solo cambia
+  `MODO_PRUEBA = False` cuando estés segura de que la lista de
+  carpetas a borrar es la correcta.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
