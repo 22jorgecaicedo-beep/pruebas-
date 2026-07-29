@@ -1030,7 +1030,7 @@ def _radicados_cortos_mencionados(nombre: str):
     return {f"{m.group(1)}-{m.group(2)}" for m in _PATRON_RADICADO_CORTO_EN_NOMBRE.finditer(nombre)}
 
 
-def revisar_contaminacion_en_disco():
+def revisar_contaminacion_en_disco(carpetas=None):
     """
     Revisa TODAS las carpetas ya descargadas en CARPETA_PROCESOS (no
     solo las de esta corrida), buscando archivos cuyo NOMBRE mencione
@@ -1051,18 +1051,24 @@ def revisar_contaminacion_en_disco():
 
     Solo revisa los NOMBRES de archivo (no abre el contenido) -- rapido
     incluso con cientos de carpetas. Respeta MODO_PRUEBA.
+
+    Por defecto ('carpetas=None') revisa TODAS las carpetas de
+    CARPETA_PROCESOS. Si se pasa 'carpetas' (lista de Path), solo
+    revisa esas -- lo usa validar_procesos_faltantes.py para revisar
+    unicamente las carpetas de los procesos de la lista de faltantes,
+    sin tener que recorrer todo el disco.
     """
     carpeta_procesos = Path(CARPETA_PROCESOS)
-    if not carpeta_procesos.exists():
-        return
-
-    try:
-        carpetas = [
-            h for h in carpeta_procesos.iterdir()
-            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
-        ]
-    except OSError:
-        return
+    if carpetas is None:
+        if not carpeta_procesos.exists():
+            return
+        try:
+            carpetas = [
+                h for h in carpeta_procesos.iterdir()
+                if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+            ]
+        except OSError:
+            return
 
     archivos_sospechosos = 0
     carpetas_vaciadas = 0
@@ -1128,7 +1134,7 @@ def revisar_contaminacion_en_disco():
         )
 
 
-def revisar_demandado_en_disco():
+def revisar_demandado_en_disco(carpetas=None):
     """
     Revisa TODAS las carpetas ya descargadas en CARPETA_PROCESOS (no
     solo las de esta corrida), buscando archivos cuyo nombre tenga un
@@ -1156,10 +1162,14 @@ def revisar_demandado_en_disco():
     Si el Excel no tiene la columna DEMANDADO (o RUTA_EXCEL no esta
     configurado/disponible), esta revision simplemente se omite sin
     afectar el resto del script. Respeta MODO_PRUEBA.
+
+    Por defecto ('carpetas=None') revisa TODAS las carpetas de
+    CARPETA_PROCESOS. Si se pasa 'carpetas' (lista de Path), solo
+    revisa esas -- lo usa validar_procesos_faltantes.py para revisar
+    unicamente las carpetas de los procesos de la lista de faltantes,
+    sin tener que recorrer todo el disco.
     """
     carpeta_procesos = Path(CARPETA_PROCESOS)
-    if not carpeta_procesos.exists():
-        return
     if not cruce_excel.RUTA_EXCEL or not os.path.exists(cruce_excel.RUTA_EXCEL):
         return
     try:
@@ -1170,13 +1180,16 @@ def revisar_demandado_en_disco():
     if not demandados_por_radicado:
         return
 
-    try:
-        carpetas = [
-            h for h in carpeta_procesos.iterdir()
-            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
-        ]
-    except OSError:
-        return
+    if carpetas is None:
+        if not carpeta_procesos.exists():
+            return
+        try:
+            carpetas = [
+                h for h in carpeta_procesos.iterdir()
+                if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+            ]
+        except OSError:
+            return
 
     archivos_sospechosos = 0
     carpetas_avisadas = 0
@@ -1453,7 +1466,7 @@ def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
     return renombrados
 
 
-def ordenar_todas_las_carpetas_en_disco():
+def ordenar_todas_las_carpetas_en_disco(carpetas=None):
     """
     Ordena cronologicamente TODAS las carpetas de proceso que ya haya
     en CARPETA_PROCESOS -- no solo las que se acaban de descargar o
@@ -1461,19 +1474,26 @@ def ordenar_todas_las_carpetas_en_disco():
     carpeta que ya estaba en el disco de antes (de una corrida anterior
     a que existiera este orden, o descargada por otro medio) tambien
     queda numerada. Respeta MODO_PRUEBA (no toca nada si esta activo).
+
+    Por defecto ('carpetas=None') ordena TODAS las carpetas de
+    CARPETA_PROCESOS. Si se pasa 'carpetas' (lista de Path), solo
+    ordena esas -- lo usa validar_procesos_faltantes.py para ordenar
+    unicamente las carpetas de los procesos de la lista de faltantes,
+    sin tener que recorrer todo el disco.
     """
     if MODO_PRUEBA:
         return
     carpeta_procesos = Path(CARPETA_PROCESOS)
-    if not carpeta_procesos.exists():
-        return
-    try:
-        carpetas = [
-            h for h in carpeta_procesos.iterdir()
-            if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
-        ]
-    except OSError:
-        return
+    if carpetas is None:
+        if not carpeta_procesos.exists():
+            return
+        try:
+            carpetas = [
+                h for h in carpeta_procesos.iterdir()
+                if h.is_dir() and h.name != cruce_excel.NOMBRE_CARPETA_DUPLICADOS
+            ]
+        except OSError:
+            return
 
     total_renombrados = 0
     for carpeta in carpetas:

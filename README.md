@@ -556,6 +556,46 @@ buscar ni descargar nada -- para no crear carpetas "_2" duplicadas si
 se vuelve a correr sobre un `procesos_faltantes_en_disco.csv`
 desactualizado.
 
+## Validar solo las carpetas de la lista de faltantes
+
+`validar_procesos_faltantes.py` es un script aparte, más liviano, para
+cuando solo quieres revisar rápido las carpetas de los procesos que
+están en `procesos_faltantes_en_disco.csv` (los que ya bajó
+`buscar_faltantes_en_drive.py`, u otros que hayas agregado a mano) --
+sin esperar a que se revise el disco completo.
+
+Para cada proceso de esa lista que **ya tenga carpeta** en el disco,
+revisa:
+
+1. **Que solo tenga documentos de su propio proceso** -- ningún archivo
+   mezclado de otro proceso con un radicado corto parecido, ni con un
+   demandado distinto al que dice el Excel (las mismas revisiones de
+   `buscar_faltantes_en_drive.py` -- ver "Revisión de contaminación
+   entre procesos" y "Revisión de demandado entre procesos" más
+   arriba -- pero aplicadas SOLO a estas carpetas, no a todo el disco).
+2. **Que sus documentos queden en orden cronológico**, numerados `1. `,
+   `2. `, etc.
+
+Los procesos de la lista que **todavía no tengan carpeta** en el disco
+se cuentan aparte y se omiten -- este script **no descarga nada** (para
+eso está `buscar_faltantes_en_drive.py`). Las carpetas que **no** estén
+en la lista de faltantes tampoco se tocan, aunque tengan el mismo tipo
+de problemas -- este script es deliberadamente angosto, solo mira la
+lista.
+
+Uso:
+
+1. Corre primero `validar_renombrar_carpetas.py` para que
+   `procesos_faltantes_en_disco.csv` esté al día.
+2. Corre `python validar_procesos_faltantes.py`.
+3. Por defecto corre en `MODO_PRUEBA = True` (solo revisa y te dice qué
+   movería/ordenaría). Cambia `MODO_PRUEBA = False` al inicio del
+   script para aplicar los cambios de verdad.
+
+Como con el resto de los scripts, los archivos sospechosos se mueven a
+`Duplicados_para_revisar` -- **nunca se borran**. Todo queda registrado
+en `validar_procesos_faltantes.log`.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
