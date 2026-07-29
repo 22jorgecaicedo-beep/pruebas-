@@ -288,8 +288,31 @@ def _nombre_coincide(nombre: str, termino: str) -> bool:
     del nombre empieza por "26"). Sin este filtro, un termino corto
     (radicado corto o cuenta) trae una cantidad enorme de falsos
     positivos de toda la unidad de Drive, sin relacion con el caso.
+
+    Ademas, si 'termino' empieza o termina en un DIGITO, una coincidencia
+    NO cuenta si justo al lado (antes o despues) hay otro digito -- sin
+    esto, buscar el radicado corto "2023-24" tambien "coincidiria" con
+    "2023-244" o "2023-248" (son en realidad radicados DISTINTOS que
+    solo comparten el mismo prefijo numerico), mezclando el contenido
+    de un proceso con el de otro.
     """
-    return termino.lower() in (nombre or "").lower()
+    nombre = (nombre or "").lower()
+    termino = termino.lower()
+    if not termino:
+        return False
+    inicio = 0
+    while True:
+        indice = nombre.find(termino, inicio)
+        if indice == -1:
+            return False
+        caracter_antes = nombre[indice - 1] if indice > 0 else ""
+        indice_despues = indice + len(termino)
+        caracter_despues = nombre[indice_despues] if indice_despues < len(nombre) else ""
+        prefijo_de_numero_mayor = termino[0].isdigit() and caracter_antes.isdigit()
+        sufijo_de_numero_mayor = termino[-1].isdigit() and caracter_despues.isdigit()
+        if not prefijo_de_numero_mayor and not sufijo_de_numero_mayor:
+            return True
+        inicio = indice + 1
 
 
 def buscar_en_drive(servicio, termino: str):

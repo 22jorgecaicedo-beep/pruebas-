@@ -478,8 +478,12 @@ Notas sobre las búsquedas por radicado corto/cuenta (las menos
 confiables): Google Drive no busca por texto exacto, busca por
 *prefijo de palabra* (buscar `"2014-26"` también puede traer `"26
 julio"`) -- el script filtra esos falsos positivos solos antes de
-descargar nada. Además, antes de descargar cualquier candidato que solo
-coincidió por radicado corto o cuenta, se verifican dos cosas:
+descargar nada. Ese mismo filtro también evita que un radicado corto
+como `"2023-24"` se confunda con uno DISTINTO que solo comparte el
+prefijo (ej. `"2023-244"` o `"2023-248"`) -- si justo al lado de la
+coincidencia hay otro dígito, no cuenta como coincidencia real. Además,
+antes de descargar cualquier candidato que solo coincidió por radicado
+corto o cuenta, se verifican dos cosas:
 
 - Que la carpeta candidata (o alguno de sus archivos) de verdad
   mencione ESE radicado -- así, si el mismo número de cuenta aparece en
