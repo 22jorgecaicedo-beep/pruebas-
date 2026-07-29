@@ -1,34 +1,31 @@
 """
-Borra las carpetas "placeholder" que creo crear_carpetas_terminados_castigo.py
-para los procesos que NO estan en un estado activo (es decir, en
-cualquier estado distinto de ESTADOS_A_CONTAR: ACTIVO, ACTIVOS CON
-TITULOS, SUSPENDIDO, REORGANIZACION) -- funciona como un "deshacer" de
-ese script.
-
-Por cada numero de proceso del Excel que NO este en ESTADOS_A_CONTAR,
-calcula el nombre EXACTO de carpeta que crear_carpetas_terminados_castigo.py
-habria creado para el (misma regla: "<numero>. <ESTADO PROCESAL exacto>"
-para TERMINADO*, o solo "<numero>." para REMITIDA*/NO INICIO*) y, SOLO
-SI existe una carpeta en el disco con exactamente ese nombre Y esta
+Borra las carpetas vacias de procesos que NO estan en un estado activo
+(es decir, en cualquier estado distinto de ESTADOS_A_CONTAR: ACTIVO,
+ACTIVOS CON TITULOS, SUSPENDIDO, REORGANIZACION) -- funciona como un
+"deshacer" de crear_carpetas_terminados_castigo.py, pero no se limita
+solo a las carpetas que ese script creo: borra CUALQUIER carpeta del
+numero de proceso (sin importar como se llame exactamente -- "numero.
+ESTADO", solo "numero.", o incluso "numero. radicado") siempre que este
 COMPLETAMENTE VACIA (sin ningun archivo adentro, ni siquiera en
-subcarpetas), la borra.
+subcarpetas).
+
+Esto incluye tanto los estados clasificados (TERMINADO*, REMITIDA*, NO
+INICIO*) como los que no encajan en ninguna regla conocida (ej.
+"DESISTIMIENTO DE PRETENSIONES", "DEVUELTA INCURRIO EN GASTOS") -- si
+el proceso no es activo y su carpeta esta vacia, se borra.
 
 Nunca toca:
   - Procesos en ESTADOS_A_CONTAR (ACTIVO, ACTIVOS CON TITULOS,
     SUSPENDIDO, REORGANIZACION) -- esos jamas se tocan, sin importar
     como se llame su carpeta.
+  - Filas sin ESTADO PROCESAL diligenciado en el Excel -- no se sabe
+    todavia si son activas o no, se dejan intactas.
   - Numeros de proceso duplicados en el Excel -- ambiguo, se deja para
     revisar a mano.
-  - Estados sin clasificar (los que crear_carpetas_terminados_castigo.py
-    tampoco crea) -- no hay nada que borrar para ellos.
   - Cualquier carpeta que NO este completamente vacia -- si tiene
     aunque sea un archivo adentro (por ejemplo porque le agregaste
     documentos a mano despues de crearla), se deja intacta y se
     reporta para que decidas que hacer.
-  - Cualquier carpeta cuyo nombre no coincida EXACTAMENTE con el que
-    crear_carpetas_terminados_castigo.py habria creado -- una carpeta
-    organizada de la forma normal "numero. radicado" nunca se borra
-    aqui.
 
 ADVERTENCIA: borrar una carpeta es IRREVERSIBLE. Respeta MODO_PRUEBA
 (por defecto True): en modo prueba solo simula y te dice que carpetas
@@ -69,6 +66,13 @@ def configurar_logging():
     )
 
 
+def _carpetas_para_numero(numero, carpetas):
+    """Todas las carpetas cuyo nombre empieza por '<numero>. ' o es exactamente '<numero>.'."""
+    prefijo = f"{numero}. "
+    exacto = f"{numero}."
+    return [c for c in carpetas if c.name.startswith(prefijo) or c.name == exacto]
+
+
 def procesar():
     if not cruce_excel.RUTA_EXCEL or not os.path.exists(cruce_excel.RUTA_EXCEL):
         logging.error("[Excel] No se encontro el archivo configurado en RUTA_EXCEL: %r", cruce_excel.RUTA_EXCEL)
@@ -85,10 +89,10 @@ def procesar():
         return
 
     try:
-        carpetas_por_nombre = {
-            d.name: d for d in carpeta_raiz.iterdir()
+        carpetas = [
+            d for d in carpeta_raiz.iterdir()
             if d.is_dir() and d.name not in cruce_excel.CARPETAS_A_IGNORAR
-        }
+        ]
     except OSError as error:
         logging.error("[Disco] No se pudo leer %s: %s", carpeta_raiz, error)
         return
@@ -106,30 +110,23 @@ def procesar():
 
         _fila, _radicado, estado = entradas[0]
         if not estado or estado.upper() in estados_ya_manejados:
-            continue  # activo, suspendido, etc (o sin estado) -- jamas se toca aqui
+            continue  # activo, suspendido, etc (o sin estado diligenciado) -- jamas se toca aqui
 
-        nombre_esperado = creador._nombre_carpeta_para(numero, estado)
-        if nombre_esperado is None:
-            continue  # estado sin clasificar -- este script tampoco lo creo, no hay nada que borrar
+        for carpeta in _carpetas_para_numero(numero, carpetas):
+            if cruce_excel.contar_archivos(carpeta) != 0:
+                no_vacias.append(carpeta.name)
+                continue
 
-        carpeta = carpetas_por_nombre.get(nombre_esperado)
-        if carpeta is None:
-            continue  # no existe (nunca se creo, o ya se borro)
+            if MODO_PRUEBA:
+                logging.info("[SIMULACION] Se borraria '%s' (proceso %s, estado '%s').", carpeta.name, numero, estado)
+                continue
 
-        if cruce_excel.contar_archivos(carpeta) != 0:
-            no_vacias.append(carpeta.name)
-            continue
-
-        if MODO_PRUEBA:
-            logging.info("[SIMULACION] Se borraria '%s' (proceso %s, estado '%s').", carpeta.name, numero, estado)
-            continue
-
-        try:
-            shutil.rmtree(organizador._ruta_larga_segura(str(carpeta)))
-            borradas += 1
-            logging.info("[Borrada] '%s' (proceso %s, estado '%s').", carpeta.name, numero, estado)
-        except OSError as error:
-            logging.warning("   (no se pudo borrar '%s': %s)", carpeta.name, error)
+            try:
+                shutil.rmtree(organizador._ruta_larga_segura(str(carpeta)))
+                borradas += 1
+                logging.info("[Borrada] '%s' (proceso %s, estado '%s').", carpeta.name, numero, estado)
+            except OSError as error:
+                logging.warning("   (no se pudo borrar '%s': %s)", carpeta.name, error)
 
     logging.info(
         "Resumen: %d carpeta(s) %s.",

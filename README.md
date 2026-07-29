@@ -737,22 +737,24 @@ quedan reportadas en el log con su fila y detalle:
 
 ### Deshacer: borrar_carpetas_terminados_castigo.py
 
-Si te arrepientes y quieres borrar las carpetas placeholder que este
-script creo, usa `borrar_carpetas_terminados_castigo.py` (o su
-iniciador `borrar_carpetas_terminados_castigo.bat`). Funciona como un
-"deshacer":
+Si quieres borrar las carpetas vacías de procesos que no son activos,
+usa `borrar_carpetas_terminados_castigo.py` (o su iniciador
+`borrar_carpetas_terminados_castigo.bat`):
 
 - Para cada número de proceso que **no** esté en `ESTADOS_A_CONTAR`
   (o sea, cualquiera que no sea `ACTIVO`, `ACTIVOS CON TITULOS`,
-  `SUSPENDIDO` o `REORGANIZACION`), calcula el nombre exacto de
-  carpeta que `crear_carpetas_terminados_castigo.py` habría creado y,
-  **solo si existe una carpeta con exactamente ese nombre y está
-  completamente vacía**, la borra.
-- **Nunca** toca procesos activos/suspendidos/reorganización, números
-  duplicados en el Excel, estados sin clasificar, ni ninguna carpeta
-  que ya tenga contenido adentro (por ejemplo porque le agregaste
-  documentos a mano) -- esas se reportan en el log para que decidas a
-  mano.
+  `SUSPENDIDO` o `REORGANIZACION`) **y tenga algún `ESTADO PROCESAL`
+  diligenciado**, borra su carpeta si está **completamente vacía** --
+  sin importar cómo se llame exactamente (`"numero. ESTADO"`, solo
+  `"numero."`, o incluso `"numero. radicado"`) ni si el estado es uno
+  de los que clasifica `crear_carpetas_terminados_castigo.py`
+  (`TERMINADO*`/`REMITIDA*`/`NO INICIO*`) o uno sin clasificar (ej.
+  `DESISTIMIENTO`, `DEVUELTA`).
+- **Nunca** toca procesos activos/suspendidos/reorganización, filas
+  sin `ESTADO PROCESAL` diligenciado todavía, números duplicados en el
+  Excel, ni ninguna carpeta que ya tenga contenido adentro (por
+  ejemplo porque le agregaste documentos a mano) -- esas se reportan
+  en el log para que decidas a mano.
 - ⚠️ Borrar una carpeta es **irreversible**. Respeta `MODO_PRUEBA`
   (por defecto `True`): revisa el log primero, y solo cambia
   `MODO_PRUEBA = False` cuando estés segura de que la lista de
