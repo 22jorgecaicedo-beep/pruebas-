@@ -420,21 +420,37 @@ que de verdad mencionen el radicado (y, si aplica, al demandante ESSA).
 
 **Orden cronológico automático:** al terminar de descargar/fusionar
 cada proceso, sus documentos quedan ordenados por FECHA y numerados
-`1. `, `2. `, etc (el más viejo primero). La fecha se busca primero en
-el NOMBRE del archivo, y si no la trae, se abren sus primeras páginas
-(PDF/DOCX) para buscarla ahí -- pero como máximo en 20 archivos por
-carpeta, para no quedarse abriendo PDF tras PDF en una carpeta grande
-(ej. fusionada de varios candidatos, con 70+ archivos). Los documentos
-sin fecha reconocible (o que superaron ese límite) quedan al final, en
-el orden en que ya estaban. Si el proceso está repartido en
-subcarpetas (ej. "principal" y "anexos"), cada una se ordena por su
-cuenta, sin mezclar los documentos de una con los de otra. Si vuelves a
-correr el script y llega un documento más viejo que los demás, el
-orden se recalcula solo. Además de las carpetas que se acaban de
-descargar/fusionar en esta corrida, **al empezar cada corrida también
-se revisan y ordenan TODAS las carpetas de proceso que ya existan en el
-disco** (de esta corrida o de cualquier corrida anterior) -- no hace
-falta que el proceso se haya tocado hoy para que quede numerado.
+`1. `, `2. `, etc (el más viejo primero). La fecha se busca, en este
+orden:
+
+1. En el NOMBRE del archivo -- reconoce varios formatos: ISO
+   (`2023-07-24`), `DD/MM/AAAA`, `"24 de julio de 2023"`, `"24 JULIO
+   2023"` (sin la palabra "de" -- el formato más común en los nombres
+   reales de autos/providencias) y `"Jul 24, 2023"`.
+2. Si el nombre no trae fecha, se abren sus primeras páginas (PDF/DOCX)
+   para buscarla ahí -- pero como máximo en 20 archivos por carpeta,
+   para no quedarse abriendo PDF tras PDF en una carpeta grande (ej.
+   fusionada de varios candidatos, con 70+ archivos).
+3. Si tampoco hay fecha en el contenido, como último recurso se usa la
+   fecha de modificación del propio archivo en el disco -- pero SOLO si
+   es de más de un día atrás (para no confundir la hora en que se
+   acaba de copiar/extraer con una fecha real). Un documento que llega
+   por **adjunto de correo** y no trae fecha propia queda con la fecha
+   del correo puesta como fecha de modificación, así que ese es el
+   valor que se usa aquí -- mejor guiarse por cuándo llegó el correo
+   que dejarlo sin ningún orden.
+
+Los documentos sin NINGUNA fecha reconocible (ni nombre, ni contenido,
+ni fecha de correo) quedan al final, en el orden en que ya estaban. Si
+el proceso está repartido en subcarpetas (ej. "principal" y "anexos"),
+cada una se ordena por su cuenta, sin mezclar los documentos de una con
+los de otra. Si vuelves a correr el script y llega un documento más
+viejo que los demás, el orden se recalcula solo. Además de las
+carpetas que se acaban de descargar/fusionar en esta corrida, **al
+empezar cada corrida también se revisan y ordenan TODAS las carpetas
+de proceso que ya existan en el disco** (de esta corrida o de
+cualquier corrida anterior) -- no hace falta que el proceso se haya
+tocado hoy para que quede numerado.
 
 **Solo se descargan archivos PDF:** cualquier otro tipo de archivo
 (Word, Excel, imágenes, etc) que aparezca junto a los PDF -- ya sea

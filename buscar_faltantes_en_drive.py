@@ -100,13 +100,20 @@ radicado (y, si aplica, al demandante ESSA).
 
 Al terminar de descargar/fusionar cada proceso, ordena sus documentos
 CRONOLOGICAMENTE y les antepone un numero de orden: "1. ", "2. ", etc
-(el mas viejo primero; los que no tengan una fecha reconocible en su
-nombre o contenido quedan al final). Ver ordenar_y_enumerar_carpeta().
-Ademas, al empezar cada corrida, TODAS las carpetas de proceso que ya
-existan en el disco (de esta corrida o de cualquier corrida anterior)
-tambien se revisan y se ordenan/enumeran de la misma forma -- no hace
-falta que el proceso se haya tocado hoy. Ver
-ordenar_todas_las_carpetas_en_disco().
+(el mas viejo primero). La fecha se busca primero en el NOMBRE del
+archivo (varios formatos, incluido "DD MES AAAA" sin la palabra "de",
+el mas comun en nombres reales de autos); si no la trae, se abren sus
+primeras paginas (PDF/DOCX); y si tampoco hay fecha ahi, como ultimo
+recurso se usa la fecha de modificacion del archivo en el disco (solo
+si es de mas de un dia atras) -- un documento que llega por adjunto de
+correo y no trae fecha propia queda con la fecha del CORREO puesta ahi
+(ver _organizar_adjunto_zip), asi que ese es el valor que se usa. Los
+que no tengan NINGUNA fecha reconocible quedan al final. Ver
+ordenar_y_enumerar_carpeta(). Ademas, al empezar cada corrida, TODAS
+las carpetas de proceso que ya existan en el disco (de esta corrida o
+de cualquier corrida anterior) tambien se revisan y se ordenan/enumeran
+de la misma forma -- no hace falta que el proceso se haya tocado hoy.
+Ver ordenar_todas_las_carpetas_en_disco().
 
 Solo se descargan archivos PDF (o archivos nativos de Google -- Doc,
 Sheet, Slide -- que Drive exporta como PDF). Cualquier otro tipo de
@@ -143,6 +150,7 @@ import unicodedata
 import uuid
 import zipfile
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 try:
@@ -655,12 +663,27 @@ def _decodificar_asunto(asunto_crudo: str) -> str:
     )
 
 
+def _fecha_del_correo(mensaje):
+    """
+    Fecha (datetime.date) del encabezado "Date" del correo, o None si no
+    trae uno reconocible. Se usa como ULTIMO recurso para ordenar un
+    documento que llego por correo y no tiene ninguna fecha reconocible
+    en su propio nombre ni contenido -- ver _fecha_de_mtime.
+    """
+    try:
+        return parsedate_to_datetime(mensaje.get("Date", "")).date()
+    except (TypeError, ValueError):
+        return None
+
+
 def buscar_en_correo(usuario: str, app_password: str, termino: str):
     """
     Busca en TODO el correo (no solo la bandeja de entrada) mensajes que
     mencionen 'termino', usando la busqueda propia de Gmail (X-GM-RAW --
     lo mismo que escribirlo en la barra de busqueda de Gmail). Devuelve
-    [(asunto, {enlaces_de_drive}, [(nombre_zip, bytes), ...]), ...].
+    [(asunto, {enlaces_de_drive}, [(nombre_zip, bytes), ...], fecha_correo), ...]
+    (fecha_correo es un datetime.date, o None si el correo no trae un
+    encabezado "Date" reconocible).
     """
     resultados = []
     with imaplib.IMAP4_SSL("imap.gmail.com") as mail:
@@ -675,6 +698,7 @@ def buscar_en_correo(usuario: str, app_password: str, termino: str):
                 continue
             mensaje = email.message_from_bytes(msg_datos[0][1])
             asunto = _decodificar_asunto(mensaje.get("Subject", ""))
+            fecha_correo = _fecha_del_correo(mensaje)
             enlaces_drive = set()
             adjuntos_zip = []
             for parte in mensaje.walk():
@@ -689,7 +713,7 @@ def buscar_en_correo(usuario: str, app_password: str, termino: str):
                     contenido = parte.get_payload(decode=True)
                     if contenido:
                         adjuntos_zip.append((organizador.sanear_nombre(nombre_adjunto), contenido))
-            resultados.append((asunto, enlaces_drive, adjuntos_zip))
+            resultados.append((asunto, enlaces_drive, adjuntos_zip, fecha_correo))
     return resultados
 
 
@@ -1288,6 +1312,14 @@ _PATRON_FECHA_DMY = re.compile(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?!\d
 _PATRON_FECHA_DIA_DE_MES_DE_ANIO = re.compile(
     r"(?<!\w)(\d{1,2})\s+de\s+([a-zA-Záéíóúñ]+)\s+de\s+(\d{4})(?!\d)", re.IGNORECASE
 )
+# Igual que la anterior, pero SIN la palabra "de" -- ej. "29 AGOSTO
+# 2023", "15 ENERO 2024". Es, con mucho, el formato mas comun en los
+# nombres de auto/providencia de la vida real (mas que con "de"), y
+# antes NO se reconocia -- esos archivos se quedaban sin fecha y el
+# orden final terminaba mezclado sin secuencia logica.
+_PATRON_FECHA_DIA_MES_ANIO = re.compile(
+    r"(?<!\w)(\d{1,2})\s+([a-zA-Záéíóúñ]{3,9})\.?\s+(\d{4})(?!\d)", re.IGNORECASE
+)
 _PATRON_FECHA_MES_DIA_ANIO = re.compile(
     r"(?<!\w)([a-zA-Záéíóúñ]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})(?!\d)", re.IGNORECASE
 )
@@ -1304,8 +1336,10 @@ def _fecha_en_texto(texto: str):
     """
     Busca la PRIMERA fecha reconocible en 'texto' (nombre de archivo, o
     contenido de un documento), probando varios formatos comunes:
-    ISO (2023-07-24), DD/MM/AAAA, "24 de julio de 2023", "Jul 24 2023".
-    Devuelve un datetime.date, o None si no encuentra ninguna.
+    ISO (2023-07-24), DD/MM/AAAA, "24 de julio de 2023", "24 JULIO
+    2023" (sin "de" -- el formato mas comun en nombres de auto reales),
+    y "Jul 24 2023". Devuelve un datetime.date, o None si no encuentra
+    ninguna.
     """
     if not texto:
         return None
@@ -1323,6 +1357,14 @@ def _fecha_en_texto(texto: str):
             return fecha
 
     m = _PATRON_FECHA_DIA_DE_MES_DE_ANIO.search(texto)
+    if m:
+        mes = _MESES.get(m.group(2).lower())
+        if mes:
+            fecha = _fecha_valida(int(m.group(3)), mes, int(m.group(1)))
+            if fecha:
+                return fecha
+
+    m = _PATRON_FECHA_DIA_MES_ANIO.search(texto)
     if m:
         mes = _MESES.get(m.group(2).lower())
         if mes:
@@ -1393,17 +1435,39 @@ def _fecha_de_contenido(ruta: Path):
     return _fecha_en_texto(texto)
 
 
+# Si un archivo no tiene fecha ni en el nombre ni en el contenido, este
+# es el ULTIMO recurso antes de dejarlo sin fecha: su propia fecha de
+# modificacion en el disco. Solo es una pista real si alguien la puso
+# ahi a proposito -- ver _organizar_adjunto_zip, que le pone la fecha
+# del CORREO a los archivos de un adjunto que no traen fecha propia.
+# Un archivo recien extraido/copiado (Drive, zip local, etc) tiene un
+# mtime de "ahora mismo"; para no confundir eso con una fecha real, se
+# exige que sea de mas de un dia atras.
+def _fecha_de_mtime(ruta: Path):
+    """Fecha de modificacion de 'ruta' en el disco, o None si es muy reciente (probablemente solo la hora de extraccion/copia, no una fecha real)."""
+    try:
+        mtime = datetime.date.fromtimestamp(ruta.stat().st_mtime)
+    except OSError:
+        return None
+    if (datetime.date.today() - mtime).days < 1:
+        return None
+    return mtime
+
+
 def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
     """
     Dentro de 'carpeta' (y cada una de sus subcarpetas, cada una por su
     cuenta -- nunca se mueven archivos de una subcarpeta a otra), ordena
-    los archivos por FECHA (primero el nombre, ver _fecha_de_nombre; y
-    si no hay, hasta MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR archivos por
+    los archivos por FECHA (primero el nombre, ver _fecha_de_nombre; si
+    no hay, hasta MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR archivos por
     carpeta pueden abrirse para buscarla en sus primeras paginas, ver
-    _fecha_de_contenido) de mas viejo a mas nuevo, y les antepone un
-    numero de orden: "1. ", "2. ", etc. Los archivos sin fecha
-    reconocible (o que superaron ese limite) quedan al final, en el
-    orden en que ya estaban.
+    _fecha_de_contenido; y si tampoco hay, como ultimo recurso la fecha
+    de modificacion del archivo en el disco, ver _fecha_de_mtime -- solo
+    sirve si alguien la puso ahi a proposito, ej. la fecha del correo en
+    _organizar_adjunto_zip) de mas viejo a mas nuevo, y les antepone un
+    numero de orden: "1. ", "2. ", etc. Los archivos sin NINGUNA fecha
+    reconocible (o que superaron el limite de contenido) quedan al
+    final, en el orden en que ya estaban.
 
     Si se corre varias veces sobre la misma carpeta, primero quita
     cualquier prefijo de orden que le haya puesto una corrida anterior
@@ -1434,6 +1498,8 @@ def ordenar_y_enumerar_carpeta(carpeta: Path) -> int:
         if not fecha and archivos_contenido_revisados < MAX_ARCHIVOS_CONTENIDO_PARA_ORDENAR:
             fecha = _fecha_de_contenido(archivo)
             archivos_contenido_revisados += 1
+        if not fecha:
+            fecha = _fecha_de_mtime(archivo)
         (con_fecha if fecha else sin_fecha).append((fecha, archivo))
     con_fecha.sort(key=lambda par: par[0])
     orden_final = [archivo for _fecha, archivo in con_fecha] + [archivo for _fecha, archivo in sin_fecha]
@@ -1911,7 +1977,7 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                 logging.error("[Correo] Fallo buscando '%s': %s", termino, error)
                 continue
             confiable = termino == radicado
-            for asunto, enlaces, adjuntos in correos:
+            for asunto, enlaces, adjuntos, fecha_correo in correos:
                 for enlace in enlaces:
                     id_enlace, _tipo = id_de_enlace_drive(enlace)
                     if id_enlace and servicio:
@@ -1927,14 +1993,14 @@ def procesar_faltante(servicio, credenciales_correo, fila, descargas_a_validar: 
                 for nombre_zip, contenido in adjuntos:
                     _organizar_adjunto_zip(
                         numero, radicado, asunto, termino, nombre_zip, contenido, confiable, descargas_a_validar,
-                        contexto, demandado,
+                        contexto, demandado, fecha_correo,
                     )
 
     _finalizar_orden(numero, contexto)
 
 
 def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, contenido: bytes, confiable: bool,
-                            descargas_a_validar: list, contexto: dict, demandado: str = ""):
+                            descargas_a_validar: list, contexto: dict, demandado: str = "", fecha_correo=None):
     motivo = "radicado completo" if confiable else f"correo ({termino}): {asunto}"
     etiqueta = "" if confiable else " -- A VALIDAR (coincidencia no exacta)"
 
@@ -1998,6 +2064,22 @@ def _organizar_adjunto_zip(numero, radicado, asunto, termino, nombre_zip, conten
             )
             shutil.rmtree(temporal, ignore_errors=True)
             return
+
+        # Un documento que llega por correo casi nunca trae una fecha
+        # reconocible en su propio nombre de archivo -- si no la tiene,
+        # se le pone como fecha de modificacion la del CORREO (mejor
+        # pista real que no tener ninguna), para que
+        # ordenar_y_enumerar_carpeta la use como ultimo recurso (ver
+        # _fecha_de_mtime). Si el archivo SI trae su propia fecha en el
+        # nombre, se deja tal cual -- esa es mas confiable.
+        if fecha_correo:
+            timestamp = datetime.datetime.combine(fecha_correo, datetime.time.min).timestamp()
+            for archivo_extraido in temporal.rglob("*") if temporal.exists() else []:
+                if archivo_extraido.is_file() and not _fecha_de_nombre(archivo_extraido):
+                    try:
+                        os.utime(archivo_extraido, (timestamp, timestamp))
+                    except OSError:
+                        pass
 
         def _mover_adjunto_a_duplicados():
             carpeta_duplicados = carpeta_procesos / cruce_excel.NOMBRE_CARPETA_DUPLICADOS
