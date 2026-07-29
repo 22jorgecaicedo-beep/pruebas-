@@ -644,7 +644,8 @@ Uso:
 
 1. Corre primero `validar_renombrar_carpetas.py` para que
    `procesos_faltantes_en_disco.csv` esté al día.
-2. Corre `python validar_procesos_faltantes.py`.
+2. Haz doble clic en `validar_faltantes.bat` (o corre `python
+   validar_procesos_faltantes.py` desde una terminal en esa carpeta).
 3. Por defecto corre en `MODO_PRUEBA = True` (solo revisa y te dice qué
    ordenaría/borraría). Cambia `MODO_PRUEBA = False` al inicio del
    script para aplicar los cambios de verdad.
