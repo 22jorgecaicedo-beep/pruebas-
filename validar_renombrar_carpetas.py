@@ -197,7 +197,7 @@ def encontrar_disco_por_etiqueta(etiqueta_buscada: str):
 RUTA_EXCEL = r"C:\Users\User\Documents\RELACION_595_PROCESOS_ESSA_1S.xlsx"
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
-HOJA_EXCEL = "ACTIVOS"
+HOJA_EXCEL = "RELACION PROCESOS"
 
 # Fila donde estan los encabezados de columna (la fila que dice "No.",
 # "RADICADO", etc). Los datos empiezan en la fila siguiente.
