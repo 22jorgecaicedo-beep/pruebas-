@@ -763,13 +763,20 @@ usa `borrar_carpetas_terminados_castigo.py` (o su iniciador
   `MODO_PRUEBA = False` cuando estés segura de que la lista de
   carpetas a borrar es la correcta.
 
-## Comparar Excel vs disco (solo un reporte de lo que falta)
+## Comparar Excel vs disco (solo un reporte de lo que falta o sobra)
 
 `comparar_excel_disco.py` (o su iniciador `comparar_excel_disco.bat`)
 compara, por **radicado**, los procesos del Excel contra las carpetas
-que existen en el disco y genera un reporte
-(`comparar_excel_disco_faltantes.csv`) con los que **no** tienen
-ninguna carpeta.
+que existen en el disco, en las **dos direcciones**:
+
+1. Procesos del Excel que **no** tienen ninguna carpeta en el disco --
+   reporte `comparar_excel_disco_faltantes.csv` (fila del Excel,
+   cuenta, radicado, juzgado, demandado y estado, cuando esas columnas
+   existen).
+2. Carpetas del disco cuyo radicado **no** aparece en el Excel --
+   reporte `comparar_excel_disco_sobran_en_disco.csv` (nombre de la
+   carpeta y radicado) -- útil para detectar carpetas de procesos que
+   ya no están vigentes o con el radicado mal escrito.
 
 - Dos radicados se consideran el **mismo proceso** si son idénticos, o
   si solo difieren en el último dígito (el consecutivo de
@@ -777,10 +784,11 @@ ninguna carpeta.
   que usa `validar_renombrar_carpetas.py`.
 - Es un script **de solo lectura**: nunca mueve, renombra, crea ni
   borra nada, solo compara y reporta. Es el más rápido de correr
-  cuando solo quieres saber qué falta, sin tocar ninguna carpeta.
-- El reporte incluye número, cuenta, radicado, juzgado, demandado y
-  estado procesal de cada proceso faltante (cuando esas columnas
-  existen en el Excel).
+  cuando solo quieres saber qué falta o qué sobra, sin tocar ninguna
+  carpeta.
+- Solo necesita la columna `RADICADO` del Excel para comparar -- no
+  depende de ninguna columna de número de proceso, así que funciona
+  incluso con informes que no tengan una columna `"No."`.
 - Usa la misma configuración (`RUTA_EXCEL`, `CARPETA_PROCESOS`, etc)
   de `validar_renombrar_carpetas.py` -- no hay que configurarla dos
   veces.

@@ -1,8 +1,14 @@
 """
 Script individual y de SOLO LECTURA: compara, por RADICADO, los
 procesos del informe de Excel contra las carpetas que existen en el
-disco duro, y genera un reporte de cuales procesos del Excel NO tienen
-ninguna carpeta correspondiente en el disco.
+disco duro, en las DOS direcciones:
+
+  1. Procesos del Excel que NO tienen ninguna carpeta en el disco
+     (reporte comparar_excel_disco_faltantes.csv).
+  2. Carpetas del disco cuyo radicado NO aparece en el Excel (reporte
+     comparar_excel_disco_sobran_en_disco.csv) -- carpetas "sobrantes"
+     que puede que ya no correspondan a ningun proceso vigente, o que
+     tengan un radicado mal escrito.
 
 Dos radicados se consideran el MISMO proceso si son idénticos, o si
 tienen los primeros 22 digitos iguales y solo difieren en el ultimo
@@ -15,9 +21,8 @@ RADICADO) -- no depende de ninguna columna de numero de proceso, asi
 que funciona con informes que no tengan una columna "No.".
 
 Este script NUNCA mueve, renombra, crea ni borra nada -- solo compara
-y genera un reporte (comparar_excel_disco_faltantes.csv) con los
-procesos del Excel que no tienen carpeta en el disco, mas el log
-detallado (comparar_excel_disco.log).
+y genera los dos reportes de arriba, mas el log detallado
+(comparar_excel_disco.log).
 
 Usa la misma configuracion (RUTA_EXCEL, HOJA_EXCEL, CARPETA_PROCESOS,
 etc) de validar_renombrar_carpetas.py -- no hay que configurarla dos
@@ -37,6 +42,7 @@ import validar_renombrar_carpetas as cruce_excel
 
 ARCHIVO_LOG = os.path.join(os.path.dirname(__file__), "comparar_excel_disco.log")
 ARCHIVO_REPORTE = os.path.join(os.path.dirname(__file__), "comparar_excel_disco_faltantes.csv")
+ARCHIVO_REPORTE_SOBRANTES = os.path.join(os.path.dirname(__file__), "comparar_excel_disco_sobran_en_disco.csv")
 
 # ===========================================================================
 
@@ -52,17 +58,17 @@ def configurar_logging():
     )
 
 
-def _radicados_en_disco():
+def _carpetas_en_disco():
     """
-    Devuelve (exactos, bases): 'exactos' es el set de radicados de 23
-    digitos encontrados en el nombre de las carpetas de primer nivel del
-    disco; 'bases' es el set de sus primeros 22 digitos (para poder
-    reconocer un radicado que solo cambia en el ultimo digito).
+    Devuelve [(nombre_carpeta, radicado), ...] para cada carpeta de primer
+    nivel del disco que tenga un radicado de 23 digitos reconocible en su
+    nombre (se ignoran las carpetas de CARPETAS_A_IGNORAR, ej.
+    Duplicados_para_revisar).
     """
     carpeta_raiz = Path(cruce_excel.CARPETA_PROCESOS)
     if not carpeta_raiz.exists():
         logging.error("[Disco] No existe la carpeta configurada en CARPETA_PROCESOS: %s", carpeta_raiz)
-        return set(), set()
+        return []
 
     try:
         carpetas = [
@@ -71,16 +77,14 @@ def _radicados_en_disco():
         ]
     except OSError as error:
         logging.error("[Disco] No se pudo leer %s: %s", carpeta_raiz, error)
-        return set(), set()
+        return []
 
-    exactos = set()
+    encontradas = []
     for carpeta in carpetas:
         radicado = cruce_excel.radicado_de_nombre_carpeta(carpeta.name)
         if radicado:
-            exactos.add(radicado)
-
-    bases = {radicado[:-1] for radicado in exactos}
-    return exactos, bases
+            encontradas.append((carpeta.name, radicado))
+    return encontradas
 
 
 def leer_radicados_excel():
@@ -118,10 +122,12 @@ def procesar():
     filas_validas = leer_radicados_excel()
     logging.info("Excel: %d proceso(s) con radicado valido de 23 digitos.", len(filas_validas))
 
-    radicados_exactos, radicados_base = _radicados_en_disco()
+    carpetas_disco = _carpetas_en_disco()
+    radicados_exactos = {radicado for _nombre, radicado in carpetas_disco}
+    radicados_base = {radicado[:-1] for radicado in radicados_exactos}
     logging.info(
         "Disco: %d carpeta(s) con radicado reconocible en %s.",
-        len(radicados_exactos), cruce_excel.CARPETA_PROCESOS,
+        len(carpetas_disco), cruce_excel.CARPETA_PROCESOS,
     )
 
     try:
@@ -129,6 +135,7 @@ def procesar():
     except Exception:
         datos_extra = {}
 
+    # --- 1) Procesos del Excel que NO tienen carpeta en el disco ---------
     encontrados = 0
     faltantes = []
     for fila, radicado in filas_validas:
@@ -143,34 +150,64 @@ def procesar():
         encontrados, len(faltantes),
     )
 
-    if not faltantes:
-        logging.info("Todos los procesos del Excel tienen carpeta en el disco. No se genero reporte.")
-        return
+    if faltantes:
+        faltantes.sort(key=lambda t: t[1])
+        filas_reporte = []
+        for fila, radicado in faltantes:
+            datos = datos_extra.get(radicado, {})
+            filas_reporte.append((
+                fila,
+                datos.get("cuenta", ""),
+                radicado,
+                datos.get("juzgado", ""),
+                datos.get("demandado", ""),
+                datos.get("estado", ""),
+            ))
 
-    faltantes.sort(key=lambda t: t[1])
-    filas_reporte = []
-    for fila, radicado in faltantes:
-        datos = datos_extra.get(radicado, {})
-        filas_reporte.append((
-            fila,
-            datos.get("cuenta", ""),
-            radicado,
-            datos.get("juzgado", ""),
-            datos.get("demandado", ""),
-            datos.get("estado", ""),
-        ))
+        if cruce_excel._escribir_csv_tolerante(
+            ARCHIVO_REPORTE,
+            ["Fila Excel", "Cuenta", "Radicado", "Juzgado", "Demandado", "Estado"],
+            filas_reporte,
+            "Faltan en el disco",
+        ):
+            logging.info("[Reporte] Guardado en: %s", ARCHIVO_REPORTE)
 
-    if cruce_excel._escribir_csv_tolerante(
-        ARCHIVO_REPORTE,
-        ["Fila Excel", "Cuenta", "Radicado", "Juzgado", "Demandado", "Estado"],
-        filas_reporte,
-        "Faltan en el disco",
-    ):
-        logging.info("[Reporte] Guardado en: %s", ARCHIVO_REPORTE)
+        logging.warning("%d proceso(s) del Excel NO tienen ninguna carpeta en el disco:", len(faltantes))
+        for fila, radicado in faltantes:
+            logging.warning("   - Fila %s del Excel: radicado %s", fila, radicado)
+    else:
+        logging.info("Todos los procesos del Excel tienen carpeta en el disco.")
 
-    logging.warning("%d proceso(s) del Excel NO tienen ninguna carpeta en el disco:", len(faltantes))
-    for fila, radicado in faltantes:
-        logging.warning("   - Fila %s del Excel: radicado %s", fila, radicado)
+    # --- 2) Carpetas del disco cuyo radicado NO aparece en el Excel ------
+    excel_exactos = {radicado for _fila, radicado in filas_validas}
+    excel_bases = {radicado[:-1] for radicado in excel_exactos}
+
+    sobrantes = []
+    for nombre, radicado in carpetas_disco:
+        if radicado in excel_exactos or radicado[:-1] in excel_bases:
+            continue
+        sobrantes.append((nombre, radicado))
+
+    logging.info(
+        "Resultado: %d carpeta(s) del disco NO tienen ningun proceso correspondiente en el Excel.",
+        len(sobrantes),
+    )
+
+    if sobrantes:
+        sobrantes.sort(key=lambda t: t[0])
+        if cruce_excel._escribir_csv_tolerante(
+            ARCHIVO_REPORTE_SOBRANTES,
+            ["Carpeta", "Radicado"],
+            sobrantes,
+            "Sobran en el disco",
+        ):
+            logging.info("[Reporte] Guardado en: %s", ARCHIVO_REPORTE_SOBRANTES)
+
+        logging.warning("%d carpeta(s) del disco NO tienen ningun proceso en el Excel:", len(sobrantes))
+        for nombre, radicado in sobrantes:
+            logging.warning("   - '%s' (radicado %s)", nombre, radicado)
+    else:
+        logging.info("Todas las carpetas del disco tienen un proceso correspondiente en el Excel.")
 
 
 def main():
