@@ -763,6 +763,28 @@ usa `borrar_carpetas_terminados_castigo.py` (o su iniciador
   `MODO_PRUEBA = False` cuando estés segura de que la lista de
   carpetas a borrar es la correcta.
 
+## Comparar Excel vs disco (solo un reporte de lo que falta)
+
+`comparar_excel_disco.py` (o su iniciador `comparar_excel_disco.bat`)
+compara, por **radicado**, los procesos del Excel contra las carpetas
+que existen en el disco y genera un reporte
+(`comparar_excel_disco_faltantes.csv`) con los que **no** tienen
+ninguna carpeta.
+
+- Dos radicados se consideran el **mismo proceso** si son idénticos, o
+  si solo difieren en el último dígito (el consecutivo de
+  instancia/reparto, ej. termina en 0 o en 1) -- la misma tolerancia
+  que usa `validar_renombrar_carpetas.py`.
+- Es un script **de solo lectura**: nunca mueve, renombra, crea ni
+  borra nada, solo compara y reporta. Es el más rápido de correr
+  cuando solo quieres saber qué falta, sin tocar ninguna carpeta.
+- El reporte incluye número, cuenta, radicado, juzgado, demandado y
+  estado procesal de cada proceso faltante (cuando esas columnas
+  existen en el Excel).
+- Usa la misma configuración (`RUTA_EXCEL`, `CARPETA_PROCESOS`, etc)
+  de `validar_renombrar_carpetas.py` -- no hay que configurarla dos
+  veces.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
