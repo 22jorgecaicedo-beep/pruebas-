@@ -194,7 +194,7 @@ def encontrar_disco_por_etiqueta(etiqueta_buscada: str):
 # ============================= CONFIGURACION =============================
 
 # Ruta al informe de Excel (.xlsx o .xlsm).
-RUTA_EXCEL = r"C:\Users\User\Desktop\PARA REVISION.xlsm"
+RUTA_EXCEL = r"C:\Users\User\Documents\RELACION_595_PROCESOS_ESSA_1S.xlsx"
 
 # Nombre de la hoja/pestaña donde estan los procesos a cruzar.
 HOJA_EXCEL = "ACTIVOS"

@@ -54,7 +54,7 @@ import openpyxl
 
 # ============================= CONFIGURACION =============================
 
-RUTA_EXCEL = r"C:\Users\User\Desktop\PARA REVISION.xlsm"
+RUTA_EXCEL = r"C:\Users\User\Documents\RELACION_595_PROCESOS_ESSA_1S.xlsx"
 HOJA_EXCEL = "ACTIVOS"
 FILA_ENCABEZADO = 5
 COLUMNA_NO = "No."
