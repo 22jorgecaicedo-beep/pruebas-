@@ -1449,20 +1449,26 @@ def procesar():
             continue
 
         for hijo, radicado_hijo in subcarpetas_con_radicado(carpeta_padre):
-            if radicado_hijo == radicado_padre:
+            # Mismo caso tambien si solo difieren en el ultimo digito
+            # (consecutivo de instancia/reparto, ej. termina en 0 o en 1) --
+            # eso NO es un proceso distinto, ver mismo_radicado_salvo_ultimo_digito.
+            es_exacto = radicado_hijo == radicado_padre
+            es_consecutivo = not es_exacto and mismo_radicado_salvo_ultimo_digito(radicado_hijo, radicado_padre)
+            if es_exacto or es_consecutivo:
+                motivo = "mismo radicado" if es_exacto else "mismo radicado salvo el ultimo digito (consecutivo)"
                 destino = ruta_libre(carpeta_duplicados, hijo.name)
                 if MODO_PRUEBA:
                     logging.info(
                         "[SIMULACION-Anidada] '%s' esta metida dentro de '%s' y es una copia del MISMO caso "
-                        "(mismo radicado); se moveria a '%s/%s'.",
-                        hijo.name, carpeta_padre.name, NOMBRE_CARPETA_DUPLICADOS, destino.name,
+                        "(%s); se moveria a '%s/%s'.",
+                        hijo.name, carpeta_padre.name, motivo, NOMBRE_CARPETA_DUPLICADOS, destino.name,
                     )
                 else:
                     carpeta_duplicados.mkdir(parents=True, exist_ok=True)
                     hijo.rename(destino)
                     logging.info(
-                        "[Anidada] '%s' estaba metida dentro de '%s' (mismo radicado); se movio a '%s/%s'.",
-                        hijo.name, carpeta_padre.name, NOMBRE_CARPETA_DUPLICADOS, destino.name,
+                        "[Anidada] '%s' estaba metida dentro de '%s' (%s); se movio a '%s/%s'.",
+                        hijo.name, carpeta_padre.name, motivo, NOMBRE_CARPETA_DUPLICADOS, destino.name,
                     )
                     movidos_a_auditar.append((hijo.name, destino))
                 anidadas_mismo_caso.append((carpeta_padre.name, hijo.name, destino.name))

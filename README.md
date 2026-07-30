@@ -267,9 +267,12 @@ faltan carpetas o filas, cada una se empareja de forma independiente.
      `1014. radicado` adentro de `941. radicado`), también se resuelve
      sola, sin borrar ni fusionar contenido — solo mueve la carpeta
      completa. Si el radicado de la anidada es el mismo que el de la
-     carpeta que la contiene, se mueve a `Duplicados_para_revisar`. Si es
-     un radicado distinto (contenido de otro caso mal ubicado), se saca
-     al nivel principal del disco para evaluarla en la próxima corrida.
+     carpeta que la contiene, **o solo difiere en el último dígito**
+     (el consecutivo de instancia/reparto, ej. termina en 0 o en 1 —
+     es el mismo caso, no un proceso distinto), se mueve a
+     `Duplicados_para_revisar`. Si es un radicado realmente distinto
+     (contenido de otro caso mal ubicado), se saca al nivel principal
+     del disco para evaluarla en la próxima corrida.
    - `[Carpeta vacía]`: carpetas sin ningún archivo adentro. El script
      revisa si hay un `.zip` con ese mismo radicado, tanto en
      `CARPETA_DESCARGAS` directamente como en su subcarpeta `Procesados`
