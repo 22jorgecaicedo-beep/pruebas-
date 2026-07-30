@@ -201,7 +201,7 @@ HOJA_EXCEL = "RELACION PROCESOS"
 
 # Fila donde estan los encabezados de columna (la fila que dice "No.",
 # "RADICADO", etc). Los datos empiezan en la fila siguiente.
-FILA_ENCABEZADO = 5
+FILA_ENCABEZADO = 1
 
 # Nombres exactos de las columnas a usar (tal como aparecen en el encabezado).
 COLUMNA_NO = "No."
@@ -211,7 +211,7 @@ COLUMNA_RADICADO = "RADICADO"
 # falta por agregar al disco" (ARCHIVO_REPORTE_FALTANTES), NO para el
 # cruce/renombrado -- si alguna de estas columnas no existe, ese reporte
 # en particular simplemente se omite (sin afectar el resto del script).
-COLUMNA_ESTADO = "ESTADO PROCESAL"
+COLUMNA_ESTADO = "ESTADO"
 COLUMNA_CUENTA = "CUENTA"
 COLUMNA_JUZGADO = "JUZGADO"
 

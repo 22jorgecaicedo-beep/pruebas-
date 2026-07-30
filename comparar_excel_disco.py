@@ -10,6 +10,10 @@ tienen los primeros 22 digitos iguales y solo difieren en el ultimo
 no es un proceso distinto (misma logica que
 mismo_radicado_salvo_ultimo_digito en validar_renombrar_carpetas.py).
 
+Lee el Excel de forma independiente (solo necesita la columna
+RADICADO) -- no depende de ninguna columna de numero de proceso, asi
+que funciona con informes que no tengan una columna "No.".
+
 Este script NUNCA mueve, renombra, crea ni borra nada -- solo compara
 y genera un reporte (comparar_excel_disco_faltantes.csv) con los
 procesos del Excel que no tienen carpeta en el disco, mas el log
@@ -22,7 +26,10 @@ veces.
 
 import logging
 import os
+import re
 from pathlib import Path
+
+import openpyxl
 
 import validar_renombrar_carpetas as cruce_excel
 
@@ -76,12 +83,39 @@ def _radicados_en_disco():
     return exactos, bases
 
 
+def leer_radicados_excel():
+    """
+    Lee el Excel y devuelve [(fila, radicado), ...] para cada fila con un
+    radicado de EXACTAMENTE 23 digitos. Solo necesita la columna RADICADO
+    -- no depende de ninguna columna de numero de proceso.
+    """
+    wb = openpyxl.load_workbook(cruce_excel.RUTA_EXCEL, data_only=True)
+    if cruce_excel.HOJA_EXCEL not in wb.sheetnames:
+        raise ValueError(
+            f"La hoja '{cruce_excel.HOJA_EXCEL}' no existe. Hojas disponibles: {wb.sheetnames}"
+        )
+    ws = wb[cruce_excel.HOJA_EXCEL]
+    encabezados = [ws.cell(row=cruce_excel.FILA_ENCABEZADO, column=c).value for c in range(1, ws.max_column + 1)]
+    col_rad = cruce_excel.encontrar_columna(encabezados, cruce_excel.COLUMNA_RADICADO)
+
+    filas = []
+    for fila in range(cruce_excel.FILA_ENCABEZADO + 1, ws.max_row + 1):
+        radicado_crudo = ws.cell(row=fila, column=col_rad).value
+        if radicado_crudo is None:
+            continue
+        radicado = re.sub(r"[\s\-]", "", str(radicado_crudo).strip())
+        if not radicado.isdigit() or len(radicado) != 23:
+            continue
+        filas.append((fila, radicado))
+    return filas
+
+
 def procesar():
     if not cruce_excel.RUTA_EXCEL or not os.path.exists(cruce_excel.RUTA_EXCEL):
         logging.error("[Excel] No se encontro el archivo configurado en RUTA_EXCEL: %r", cruce_excel.RUTA_EXCEL)
         return
 
-    filas_validas, _casi_validas = cruce_excel.leer_filas_excel(silencioso=True)
+    filas_validas = leer_radicados_excel()
     logging.info("Excel: %d proceso(s) con radicado valido de 23 digitos.", len(filas_validas))
 
     radicados_exactos, radicados_base = _radicados_en_disco()
@@ -97,11 +131,11 @@ def procesar():
 
     encontrados = 0
     faltantes = []
-    for fila, numero, radicado in filas_validas:
+    for fila, radicado in filas_validas:
         if radicado in radicados_exactos or radicado[:-1] in radicados_base:
             encontrados += 1
             continue
-        faltantes.append((fila, numero, radicado))
+        faltantes.append((fila, radicado))
 
     logging.info(
         "Resultado: %d proceso(s) SI tienen carpeta en el disco (radicado igual o con distinto consecutivo), "
@@ -115,10 +149,10 @@ def procesar():
 
     faltantes.sort(key=lambda t: t[1])
     filas_reporte = []
-    for fila, numero, radicado in faltantes:
+    for fila, radicado in faltantes:
         datos = datos_extra.get(radicado, {})
         filas_reporte.append((
-            numero,
+            fila,
             datos.get("cuenta", ""),
             radicado,
             datos.get("juzgado", ""),
@@ -128,15 +162,15 @@ def procesar():
 
     if cruce_excel._escribir_csv_tolerante(
         ARCHIVO_REPORTE,
-        ["No.", "Cuenta", "Radicado", "Juzgado", "Demandado", "Estado Procesal"],
+        ["Fila Excel", "Cuenta", "Radicado", "Juzgado", "Demandado", "Estado"],
         filas_reporte,
         "Faltan en el disco",
     ):
         logging.info("[Reporte] Guardado en: %s", ARCHIVO_REPORTE)
 
     logging.warning("%d proceso(s) del Excel NO tienen ninguna carpeta en el disco:", len(faltantes))
-    for fila, numero, radicado in faltantes:
-        logging.warning("   - Proceso %s (fila %s del Excel): radicado %s", numero, fila, radicado)
+    for fila, radicado in faltantes:
+        logging.warning("   - Fila %s del Excel: radicado %s", fila, radicado)
 
 
 def main():
