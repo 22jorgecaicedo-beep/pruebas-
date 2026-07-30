@@ -793,6 +793,25 @@ que existen en el disco, en las **dos direcciones**:
   de `validar_renombrar_carpetas.py` -- no hay que configurarla dos
   veces.
 
+## Borrar una carpeta que Windows no deja borrar
+
+Si el Explorador de Windows se niega a borrar una carpeta (rutas muy
+largas, metadatos raros, o simplemente se traba) usa
+`borrar_carpeta_forzado.bat`:
+
+- Arrastra la carpeta problemática sobre el `.bat` (o dale doble clic y
+  pega la ruta completa cuando te la pida).
+- Te pide confirmación escribiendo `SI` antes de borrar nada.
+- Primero vacía el contenido con `robocopy` (que sí sabe manejar rutas
+  largas, a diferencia del Explorador) y luego borra la carpeta ya
+  vacía.
+- ⚠️ Es **irreversible** -- solo úsalo cuando estés segura de que
+  quieres borrar esa carpeta completa y todo su contenido.
+- Si después de correrlo la carpeta sigue sin borrarse del todo, es
+  que algún archivo de adentro está abierto en otro programa (Word,
+  Excel, un PDF, el antivirus escaneándola) -- ciérralo e inténtalo de
+  nuevo.
+
 ## Si algo falla
 
 - El sitio del SGDE puede cambiar de diseño con el tiempo, lo que puede
