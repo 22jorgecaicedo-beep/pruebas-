@@ -1,74 +1,64 @@
-# Discussion post (paste this into D2L)
+# Discussion post — listo para pegar en D2L
 
-> Replace every `[ ]` with the real number your own run prints. The story below
-> is the one this code actually produces; only the counts depend on your file.
+**Dataset: Spotify 2023 Song Metrics (953 songs, 24 columns)**
 
----
+I picked this one because I wanted to check whether the songs that appear on the
+most playlists are also the ones with the most streams. Before I could ask that,
+the file needed work.
 
-**Dataset: Spotify 2023 Song Metrics**
-
-I picked the Spotify file because I listen to a lot of this music and I wanted to
-see whether the songs that end up on the most playlists are also the ones with
-the highest number of streams. Before I could ask that, the file needed work.
-
-**The first thing that happened was an error.** `pd.read_csv('spotify-2023.csv')`
-threw `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xf1`. The file is not
-saved as UTF-8. Adding `encoding='latin-1'` loaded it, so I wrote a small loop
-that tries UTF-8 first and falls back to latin-1:
-
-```python
-for enc in ["utf-8", "latin-1"]:
-    try:
-        data = pd.read_csv(FILENAME, encoding=enc)
-        break
-    except UnicodeDecodeError:
-        continue
-```
-
-**Then `.info()` showed me the real problem.** `streams` was listed as `object`
-instead of a number. A column of play counts should never be text, and that told
-me at least one value in there was not a number. Same with
+`.info()` is where I found the real problem. `streams` came back as `object`
+instead of a number. A column of play counts should never be text, and that
+told me something non-numeric was hiding in there. Same with
 `in_deezer_playlists` and `in_shazam_charts`. Two different causes:
 
-- Deezer and Shazam counts are written with a comma — `1,438` — so pandas read
-  them as strings.
-- In `streams` there is one row where an entire block of text
-  (`BPM110KeyAModeMajor...`) got written into the cell. The row is shifted.
+- The Deezer and Shazam numbers are written with a thousands separator
+  (`1,438`), so pandas read the whole column as strings.
+- In `streams` there is one row where a block of text
+  (`BPM110KeyAModeMajor...`) ended up inside the cell. That row is shifted.
 
 I stripped the commas and used `pd.to_numeric(..., errors="coerce")`, which
-turns anything that is still not a number into `NaN` so I can count it:
+turns whatever is still not a number into `NaN` so I can count exactly how
+many bad values there were:
 
 ```python
 cleaned = data[col].astype(str).str.replace(",", "", regex=False).str.strip()
 data[col] = pd.to_numeric(cleaned, errors="coerce")
 ```
 
-That converted [X] values and left exactly [X] that could not be saved.
+`in_deezer_playlists` and `in_shazam_charts` converted with **0** values lost —
+it really was just the commas. `streams` lost exactly **1**: the broken row.
 
-**The decision I spent the most time on was what to do about missing values.**
-The tutorial shows `dropna()`, and my first version used it — I lost [X] rows.
-That felt wrong, because most of those rows were only missing `key` (the musical
-key of the song), and I was throwing away complete stream counts to fix one
-blank cell. So I split it up:
+Missing values: **95** songs with no `key` and **50** with no
+`in_shazam_charts`. **0** exact duplicate rows, which honestly surprised me.
 
-- The row with unusable `streams` → **dropped.** Filling in a median play count
-  would be inventing data.
-- Missing numeric values → **median**, not mean, because a few massive hits pull
-  the mean upward.
+**The decision I spent the most time on was `dropna()`.** The tutorial uses it
+and my first version did too. But `dropna()` deletes an entire row if *any*
+column in it is blank, so it was throwing out the 95 rows missing `key` — and
+those rows had perfectly good stream counts. I was destroying real data to fix
+one empty cell. So I handled each column separately instead:
+
+- The row with the unusable `streams` value → **dropped**. Filling in a median
+  play count there would be inventing data.
+- Missing numbers → **median**, not mean, because a handful of enormous hits
+  drag the mean upward.
 - Missing `key` → **"Unknown"**, because it is a category, not a quantity.
 
-**I also left the outliers alone on purpose.** The IQR rule flagged [X] songs in
-`streams`, but I checked and those are just genuinely huge hits. An outlier is
-not automatically an error, and deleting the biggest songs would have destroyed
-the exact thing I wanted to study.
+**953 rows → 952 rows, and 0 missing values left.**
 
-Last steps: renamed the columns to lowercase with underscores (`danceability_%`
-became `danceability_pct`, which is much easier to type), dropped [X] exact
-duplicate rows, and combined `released_year`, `released_month` and
-`released_day` into a single `release_date` column with `pd.to_datetime()`.
+I also left the outliers alone on purpose. The IQR rule flagged 109 songs in
+`in_spotify_playlists` and 150 in `released_year`, but those are not errors.
+`describe()` showed me the oldest song in the file is from **1930**, and streams
+run from **2,762 up to 3.7 billion**. Those are old songs that came back into
+the charts and genuine mega-hits. Deleting them would have destroyed the exact
+thing I wanted to study.
 
-**Result:** [X] rows before → [X] rows after, and 0 missing values left.
+(One thing that did *not* happen: I had written a fallback in case the file was
+not saved as UTF-8, since encoding errors are common with this dataset. Mine
+loaded on the first try, so the fallback never ran. I left it in anyway.)
 
-**What I'm still unsure about:** filling `key` with "Unknown" adds a category
-that does not really exist in music. Would it be better to leave those as `NaN`
-so they are visibly missing? I couldn't decide.
+**What I'm still unsure about:** filling the 50 missing `in_shazam_charts` with
+the median gave me **2.5**. That is the correct median, but "appeared on 2.5
+charts" is not a real thing — it's a count, so it should be a whole number. I
+don't know whether the right move is to round it, use 0, or just leave those as
+`NaN` and be upfront that they are unknown. Has anyone run into medians on a
+count column?
