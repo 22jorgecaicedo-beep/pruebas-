@@ -82,3 +82,44 @@ técnicas estándar para reducir esa detección. Por eso esa parte se
 descartó: la descarga sigue siendo manual (como siempre la has hecho),
 y este organizador se encarga de la parte que sí funciona de forma
 confiable: extraer y organizar lo que ya descargaste.
+
+## Filtrar el informe de procesos concursales (`filtrar_procesos.py`)
+
+Toma el `.xlsx` del informe de procesos concursales y genera un Excel
+nuevo con **solo los procesos que NO están en estado "ACUERDO
+CONFIRMADO"**.
+
+Uso:
+
+```
+pip install -r requirements.txt
+python filtrar_procesos.py "C:\Users\Owner\Downloads\informe procesos concursales Agosto 2026.xlsx"
+```
+
+Si no le pasas ninguna ruta, busca en tu carpeta de Descargas el archivo
+más reciente que empiece por `informe procesos concursales`.
+
+El Excel de salida queda al lado del original, con el sufijo
+`- SIN ACUERDO CONFIRMADO.xlsx`, y trae dos hojas:
+
+- **Procesos**: las filas que quedaron, con las mismas columnas del
+  informe más la hoja y la fila de donde salió cada una (para poder
+  verificar contra el original), encabezado fijo y filtros activados.
+- **Resumen**: cuántos procesos hay por cada estado y cuáles se
+  incluyeron o se excluyeron, más los totales.
+
+Detalles:
+
+- Encuentra sola la fila de encabezados (aunque el informe tenga título y
+  filas en blanco arriba) y la columna de estado (`Estado`, `Estado del
+  proceso`, `Estado actual`, `Etapa`, ...).
+- Compara los estados sin tildes, sin importar mayúsculas y sin importar
+  espacios de más, así que `Acuerdo Confirmado` y `ACUERDO  CONFIRMADO`
+  cuentan igual.
+- Por defecto también excluye las variantes que contienen ese texto (por
+  ejemplo `Acuerdo confirmado en ejecución`). Si quieres excluir
+  únicamente el estado exacto, agrega `--exacto`.
+- Las filas sin estado se conservan (no están en acuerdo confirmado) y
+  aparecen en el resumen como `(sin estado)`.
+- Revisa todas las hojas del libro; las que no tengan columna de estado
+  se omiten con un aviso.
