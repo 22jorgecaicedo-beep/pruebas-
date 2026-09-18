@@ -105,19 +105,27 @@ busca el informe en Descargas y genera el Excel. Si prefieres indicarle un
 archivo puntual, arrastra el `.xlsx` sobre el `.bat`.
 
 El Excel de salida queda al lado del original, con el sufijo
-`- SIN ACUERDO CONFIRMADO.xlsx`, y trae dos hojas:
+`- SIN ACUERDO CONFIRMADO.xlsx`, y trae:
 
-- **Procesos**: las filas que quedaron, con las mismas columnas del
-  informe más la hoja y la fila de donde salió cada una (para poder
-  verificar contra el original), encabezado fijo y filtros activados.
-- **Resumen**: cuántos procesos hay por cada estado y cuáles se
-  incluyeron o se excluyeron, más los totales.
+- Una hoja **por cada hoja del informe** (`REORGANIZACION`,
+  `LIQUIDACION`, ...), cada una con sus propios encabezados —los informes
+  suelen tener columnas distintas en cada hoja—, solo las filas que
+  quedaron, y el número de fila del informe original para poder
+  verificar. Encabezado fijo y filtros activados.
+- Una hoja **Resumen** con los totales por hoja, el detalle por estado y
+  **qué columna se usó** para decidir en cada hoja.
 
 Detalles:
 
 - Encuentra sola la fila de encabezados (aunque el informe tenga título y
-  filas en blanco arriba) y la columna de estado (`Estado`, `Estado del
-  proceso`, `Estado actual`, `Etapa`, ...).
+  filas en blanco arriba) y la columna de estado (`Etapa actual`,
+  `Estado del proceso`, `Estado actual`, ...).
+- Cuando hay varias columnas que empiezan por `ESTADO` o `ETAPA` —por
+  ejemplo `ESTADO DEL PROCESO LEASING, EJECUTIVO O RESTITUCIÓN`, que no
+  es la etapa del proceso concursal— revisa el **contenido** de cada
+  una y se queda con la que de verdad trae los estados del proceso.
+  Si aun así elige mal, se le puede indicar a mano:
+  `--columna "ETAPA ACTUAL"`. La hoja Resumen siempre dice cuál usó.
 - Compara los estados sin tildes, sin importar mayúsculas y sin importar
   espacios de más, así que `Acuerdo Confirmado` y `ACUERDO  CONFIRMADO`
   cuentan igual.
@@ -126,5 +134,4 @@ Detalles:
   únicamente el estado exacto, agrega `--exacto`.
 - Las filas sin estado se conservan (no están en acuerdo confirmado) y
   aparecen en el resumen como `(sin estado)`.
-- Revisa todas las hojas del libro; las que no tengan columna de estado
-  se omiten con un aviso.
+- Las hojas que no tengan columna de estado se omiten con un aviso.
