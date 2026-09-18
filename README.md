@@ -99,6 +99,11 @@ python filtrar_procesos.py "C:\Users\Owner\Downloads\informe procesos concursale
 Si no le pasas ninguna ruta, busca en tu carpeta de Descargas el archivo
 más reciente que empiece por `informe procesos concursales`.
 
+También puedes poner `filtrar_procesos.py` y `filtrar_procesos.bat` en la
+misma carpeta y hacer doble clic en el `.bat`: instala lo que haga falta,
+busca el informe en Descargas y genera el Excel. Si prefieres indicarle un
+archivo puntual, arrastra el `.xlsx` sobre el `.bat`.
+
 El Excel de salida queda al lado del original, con el sufijo
 `- SIN ACUERDO CONFIRMADO.xlsx`, y trae dos hojas:
 
