@@ -1,3 +1,3 @@
 ﻿fuente;dataset;origen;corte_de_los_datos;registros_nacionales;registros_en_departamentos;fecha_construccion
-Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) - Ministerio de Salud;c36g-9fc2;Archivo local: REPS_c36g-9fc2_descargado_2026-10-05.csv;2026-03-12;27485;27485;2026-10-05 21:25
-Listado de Entidades del Sector Solidario - Superintendencia de la Economía Solidaria;kg2d-yfyg;Archivo local: Supersolidaria_kg2d-yfyg_descargado_2026-10-05.csv;2026-07-31;34292;1484;2026-10-05 21:25
+Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) - Ministerio de Salud;c36g-9fc2;https://www.datos.gov.co/api/views/c36g-9fc2/rows.csv?accessType=DOWNLOAD;2026-03-12;76821;27485;2026-10-05 21:26
+Listado de Entidades del Sector Solidario - Superintendencia de la Economía Solidaria;kg2d-yfyg;https://www.datos.gov.co/api/views/kg2d-yfyg/rows.csv?accessType=DOWNLOAD;2026-07-31;126446;1487;2026-10-05 21:26
