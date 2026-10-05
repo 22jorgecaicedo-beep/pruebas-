@@ -578,6 +578,14 @@ def agrupar_ips(encabezados, sedes):
     col_nit = columna_nit(encabezados)
     col_nombre = columna_nombre(encabezados)
     col_principal = buscar_columna(encabezados, ("sedeprincipal", "principal"))
+    col_sede = buscar_columna(encabezados, ("codigohabilitacionsede", "codigosede"))
+
+    def es_principal(sede):
+        if col_principal:
+            return normalizar(sede[col_principal]) in ("SI", "S", "1", "TRUE", "X")
+        # El REPS numera la sede principal con el codigo del prestador + "01".
+        return bool(col_codigo and col_sede
+                    and sede[col_sede] == sede[col_codigo] + "01")
 
     grupos = {}
     for sede in sedes:
@@ -592,12 +600,9 @@ def agrupar_ips(encabezados, sedes):
 
     ips = []
     for grupo in grupos.values():
-        principal = grupo[0]
-        if col_principal:
-            for sede in grupo:
-                if normalizar(sede[col_principal]) in ("SI", "S", "1", "TRUE", "X"):
-                    principal = sede
-                    break
+        if col_sede:
+            grupo.sort(key=lambda sede: sede[col_sede])
+        principal = next((sede for sede in grupo if es_principal(sede)), grupo[0])
         fila = dict(principal)
         fila["bd_num_sedes"] = len(grupo)
         ips.append(fila)

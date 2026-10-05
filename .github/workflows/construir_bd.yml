@@ -29,6 +29,10 @@ jobs:
 
       - name: Guardar el resultado en la rama
         run: |
+          # La rama pudo avanzar mientras el job esperaba; guarda el resultado
+          # sobre su ultima version.
+          git fetch origin "$GITHUB_REF_NAME"
+          git checkout -B "$GITHUB_REF_NAME" "origin/$GITHUB_REF_NAME"
           destino=base_datos_ips_cooperativas/resultado
           rm -rf "$destino"
           mkdir -p "$destino"
@@ -42,5 +46,5 @@ jobs:
             echo "Sin cambios en el resultado."
           else
             git commit -m "Actualizar base de datos de IPS y cooperativas ($(date -u +%Y-%m-%d))"
-            git push
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi

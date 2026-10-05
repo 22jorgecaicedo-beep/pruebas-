@@ -249,6 +249,19 @@ class PruebaCompleta(unittest.TestCase):
         self.assertEqual(hoja["A1"].value, "bd_departamento")
         self.assertTrue((salida / "csv" / "ips.csv").exists())
 
+    def test_sede_principal_por_codigo(self):
+        # El REPS real no marca la sede principal: es la del codigo + "01".
+        encabezados = ["codigo_prestador", "codigo_habilitacion_sede", "nombre_sede"]
+        sedes = [
+            {"codigo_prestador": "0523704806", "codigo_habilitacion_sede": cod,
+             "nombre_sede": nombre, "bd_es_ips": "SI", "bd_departamento": "ANTIOQUIA"}
+            for cod, nombre in (("052370480607", "SEDE BARBOSA"),
+                                ("052370480601", "SEDE DONMATIAS"),
+                                ("052370480603", "SEDE GIRARDOTA"))]
+        ips = bd.agrupar_ips(encabezados, sedes)
+        self.assertEqual([(i["nombre_sede"], i["bd_num_sedes"]) for i in ips],
+                         [("SEDE DONMATIAS", 3)])
+
     def test_incluir_bogota(self):
         _, con = self.construir("--incluir-bogota")
         self.assertEqual(con.execute(
