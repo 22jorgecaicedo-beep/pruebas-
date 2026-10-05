@@ -1,0 +1,70 @@
+name: Construir base de datos de IPS y cooperativas
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/database-ips-cooperativas-dukd37]
+    paths:
+      - base_datos_ips_cooperativas/construir_bd.py
+      - .github/workflows/construir_bd.yml
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r base_datos_ips_cooperativas/requirements.txt
+
+      - name: Construir la base de datos
+        working-directory: base_datos_ips_cooperativas
+        run: python construir_bd.py
+
+      - name: Diagnóstico de las fuentes
+        if: always()
+        run: |
+          python - <<'PY'
+          import collections, sys
+          from pathlib import Path
+          sys.path.insert(0, "base_datos_ips_cooperativas")
+          import construir_bd as bd
+          for ruta in sorted(Path("base_datos_ips_cooperativas/salida/fuentes").glob("*.csv")):
+              cols, filas = bd.leer_tabla(ruta)
+              print(f"===== {ruta.name}: {len(filas)} filas")
+              print("Columnas:", cols)
+              for fila in filas[:3]:
+                  print(fila)
+              for c in cols:
+                  k = bd.clave(c)
+                  if any(p in k for p in ("depa", "dpto", "clase", "tipo", "estado", "natur",
+                                          "nivel", "corte", "principal", "organiz", "habilit")):
+                      conteo = collections.Counter(f[c] for f in filas)
+                      print(f"--- {c}: {len(conteo)} valores distintos")
+                      for valor, n in conteo.most_common(60):
+                          print(f"   {n:>7}  {valor}")
+          PY
+
+      - name: Guardar el resultado en la rama
+        run: |
+          destino=base_datos_ips_cooperativas/resultado
+          rm -rf "$destino"
+          mkdir -p "$destino"
+          cp -r base_datos_ips_cooperativas/salida/IPS_y_Cooperativas.xlsx \
+                base_datos_ips_cooperativas/salida/ips_cooperativas.sqlite \
+                base_datos_ips_cooperativas/salida/csv "$destino"/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$destino"
+          if git diff --cached --quiet; then
+            echo "Sin cambios en el resultado."
+          else
+            git commit -m "Actualizar base de datos de IPS y cooperativas ($(date -u +%Y-%m-%d))"
+            git push
+          fi
