@@ -78,6 +78,19 @@ TIMEOUT_DESCARGA_SEGUNDOS = 300
 # auxiliares del cooperativismo con cooperativas.
 PATRON_COOPERATIVA = re.compile(r"\b(PRE)?COOPERATIV(A|AS|O|OS)\b|\bCOOP\b")
 
+# Tipos de entidad de la Supersolidaria que son cooperativas (multiactivas,
+# especializadas, integrales, de trabajo asociado, precooperativas...) y
+# tipos que nunca lo son, aunque su nombre lo diga.
+TIPOS_COOPERATIVOS = re.compile(
+    r"MULTIACTIVA|ESPECIALIZADA (DE|SIN)|INTEGRAL|TRABAJO ASOCIADO|"
+    r"PRECOOPERATIVA|APORTES Y CREDITO|COOPERATIV(A|AS|O|OS)\b|"
+    r"CARACTER ECONOMICO")
+TIPOS_NO_COOPERATIVOS = re.compile(r"FONDO|MUTUAL")
+
+# Un reporte a la Supersolidaria en los ultimos 12 meses del listado indica
+# que la entidad sigue activa.
+MESES_REPORTE_ACTIVO = 12
+
 PATRON_IPS = re.compile(r"\bIPS\b|\bINSTITUCION(ES)? PRESTADORA")
 
 MAX_FILAS_EXCEL = 1_048_575
@@ -93,6 +106,18 @@ def sin_tildes(texto):
 def normalizar(texto):
     """Mayusculas, sin tildes y con espacios simples."""
     return re.sub(r"\s+", " ", sin_tildes(str(texto or ""))).strip().upper()
+
+
+def reparar_texto(texto):
+    """Repara texto UTF-8 mal decodificado: 'BOLÃ\x8dVAR' -> 'BOLÍVAR'."""
+    if "Ã" not in texto and "Â" not in texto:
+        return texto
+    try:
+        datos = bytes(ord(c) if ord(c) < 256 else c.encode("cp1252")[0]
+                      for c in texto)
+        return datos.decode("utf-8")
+    except (UnicodeError, ValueError):
+        return texto
 
 
 def nombre_columna(encabezado):
@@ -125,15 +150,17 @@ def unicos(nombres):
 
 
 def normalizar_nit(valor):
-    """'890.981.234-5', '8909812345' y '890981234' -> '890981234'."""
+    """'891-500-074-3', '891.500.074-3', '8915000743' y '891500074'
+    -> '891500074'."""
     texto = str(valor or "").strip()
     if re.fullmatch(r"\d+\.0+", texto):
         texto = texto.split(".")[0]
-    digitos = re.sub(r"\D", "", texto.split("-")[0])
-    # NIT de persona juridica (empieza por 8 o 9) con el digito de
-    # verificacion pegado al final.
-    if len(digitos) == 10 and digitos[0] in "89":
-        digitos = digitos[:9]
+    digitos = re.sub(r"\D", "", texto)
+    # Quita el digito de verificacion: va separado por un guion al final, o
+    # pegado a un NIT de persona juridica (que empieza por 8 o 9).
+    if re.search(r"\d\s*-\s*\d$", texto) or (
+            len(digitos) == 10 and digitos[0] in "89"):
+        digitos = digitos[:-1]
     return digitos.lstrip("0")
 
 
@@ -152,7 +179,28 @@ def clave_fecha(valor):
     m = re.fullmatch(r"(\d{4})(\d{2})?(\d{2})?", texto)
     if m:
         return int(m[1]), int(m[2] or 0), int(m[3] or 0)
+    m = re.search(r"\b([A-Za-z]{3})[a-z]*\.? (\d{1,2}),? (\d{4})", texto)
+    if m and normalizar(m[1]) in MESES:
+        return int(m[3]), MESES[normalizar(m[1])], int(m[2])
     return 0, 0, 0
+
+
+MESES = {"JAN": 1, "ENE": 1, "FEB": 2, "MAR": 3, "APR": 4, "ABR": 4,
+         "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8, "AGO": 8, "SEP": 9,
+         "OCT": 10, "NOV": 11, "DEC": 12, "DIC": 12}
+
+
+def fecha_iso(clave_de_fecha):
+    anio, mes, dia = clave_de_fecha
+    if not anio:
+        return ""
+    return f"{anio:04d}-{mes:02d}-{dia:02d}" if dia else f"{anio:04d}-{mes:02d}"
+
+
+def restar_meses(clave_de_fecha, meses):
+    anio, mes, dia = clave_de_fecha
+    total = anio * 12 + (mes - 1) - meses
+    return total // 12, total % 12 + 1, dia
 
 
 # ---------------------------- Departamentos --------------------------------
@@ -255,6 +303,24 @@ def columna_nombre(encabezados):
          "munic", "ciudad", "sede", "tipo", "clase", "codigo"))
 
 
+def columna_corte(encabezados):
+    """Fecha de corte o del ultimo reporte de cada registro."""
+    return buscar_columna(
+        encabezados,
+        ("fechacorte", "fechaultirepo", "fechaultimoreporte", "ultimoreporte",
+         "fechareporte", "corte", "periodo"))
+
+
+def corte_de_los_datos(encabezados, filas):
+    """La fecha de corte mas reciente del registro, para la hoja Fuentes."""
+    col = columna_corte(encabezados)
+    valores = {f[col] for f in filas if f[col]} if col else set()
+    if not valores:
+        return ""
+    mas_reciente = max(valores, key=clave_fecha)
+    return fecha_iso(clave_fecha(mas_reciente)) or mas_reciente
+
+
 def ubicar(fila, cols_depto, cols_muni, objetivos):
     """Devuelve (departamento objetivo o None, municipio)."""
     departamento = None
@@ -290,10 +356,10 @@ def leer_tabla(ruta):
         encabezados, filas = leer_xlsx(ruta)
     else:
         encabezados, filas = leer_csv(ruta)
-    cols = unicos([nombre_columna(h) for h in encabezados])
+    cols = unicos([nombre_columna(reparar_texto(h)) for h in encabezados])
     datos = []
     for fila in filas:
-        fila = list(fila) + [""] * (len(cols) - len(fila))
+        fila = [reparar_texto(v) for v in fila] + [""] * (len(cols) - len(fila))
         datos.append(dict(zip(cols, fila)))
     return cols, datos
 
@@ -408,9 +474,10 @@ def procesar_solidarias(encabezados, filas, objetivos):
     cols_tipo = columnas(
         encabezados, ("tipo", "clase", "naturaleza", "organizacion"),
         ("identific", "document", "nit", "reporte", "nivel"))
-    col_corte = buscar_columna(encabezados, ("fechacorte", "corte", "periodo"))
+    col_corte = columna_corte(encabezados)
 
-    # Si el listado trae varios cortes de la misma entidad, deja el mas reciente.
+    # El listado trae un registro por cada reporte de la entidad; deja el
+    # mas reciente.
     if col_nit and col_corte:
         ultimas, sin_nit = {}, []
         for fila in filas:
@@ -422,12 +489,18 @@ def procesar_solidarias(encabezados, filas, objetivos):
                 ultimas[nit] = fila
         filas = list(ultimas.values()) + sin_nit
 
+    if col_corte:
+        ultimo_corte = max((clave_fecha(f[col_corte]) for f in filas),
+                           default=(0, 0, 0))
+        corte_activo = restar_meses(ultimo_corte, MESES_REPORTE_ACTIVO)
+
     nits_cooperativas = set()
     entidades = []
     for fila in filas:
-        nombre = fila.get(col_nombre, "") if col_nombre else ""
-        texto = normalizar(" ".join([fila[c] for c in cols_tipo] + [nombre]))
-        cooperativa = bool(PATRON_COOPERATIVA.search(texto))
+        nombre = normalizar(fila.get(col_nombre, "")) if col_nombre else ""
+        tipo = normalizar(" ".join(fila[c] for c in cols_tipo))
+        cooperativa = not TIPOS_NO_COOPERATIVOS.search(tipo) and bool(
+            TIPOS_COOPERATIVOS.search(tipo) or PATRON_COOPERATIVA.search(nombre))
         if cooperativa and col_nit:
             nit = normalizar_nit(fila[col_nit])
             if nit:
@@ -436,12 +509,17 @@ def procesar_solidarias(encabezados, filas, objetivos):
         departamento, municipio = ubicar(fila, cols_depto, cols_muni,
                                          objetivos)
         if departamento:
-            entidades.append({
+            calculadas = {
                 "bd_departamento": departamento,
                 "bd_municipio": municipio,
                 "bd_es_cooperativa": "SI" if cooperativa else "NO",
-                **fila,
-            })
+            }
+            if col_corte:
+                reporte = clave_fecha(fila[col_corte])
+                calculadas["bd_ultimo_reporte"] = fecha_iso(reporte)
+                calculadas["bd_reporta_actualmente"] = (
+                    "SI" if reporte[0] and reporte >= corte_activo else "NO")
+            entidades.append({**calculadas, **fila})
     return entidades, nits_cooperativas
 
 
@@ -547,6 +625,8 @@ def resumen(objetivos, ips, sedes, entidades):
             "ips_cooperativas": contar(ips, bd_es_cooperativa="SI"),
             "otras_sedes_reps_no_ips": contar(sedes, bd_es_ips="NO"),
             "cooperativas": contar(entidades, bd_es_cooperativa="SI"),
+            "cooperativas_que_reportan_actualmente": contar(
+                entidades, bd_es_cooperativa="SI", bd_reporta_actualmente="SI"),
             "otras_entidades_solidarias": contar(entidades, bd_es_cooperativa="NO"),
         })
     total = {"departamento": "TOTAL"}
@@ -720,8 +800,10 @@ def main(argv=None):
     cols_sedes = columnas_de(cols_reps, calc_reps)
     cols_ips = columnas_de(cols_reps, calc_reps[:2] + ["bd_num_sedes"]
                            + calc_reps[3:])
-    cols_entidades = columnas_de(
-        cols_sol, ["bd_departamento", "bd_municipio", "bd_es_cooperativa"])
+    calc_sol = ["bd_departamento", "bd_municipio", "bd_es_cooperativa"]
+    if columna_corte(cols_sol):
+        calc_sol += ["bd_reporta_actualmente", "bd_ultimo_reporte"]
+    cols_entidades = columnas_de(cols_sol, calc_sol)
 
     ips = ordenar(ips, cols_reps)
     sedes = ordenar(sedes, cols_reps)
@@ -734,10 +816,13 @@ def main(argv=None):
     cols_resumen = list(filas_resumen[0])
     fuentes = [
         {"fuente": FUENTES["reps"]["titulo"], "dataset": FUENTES["reps"]["dataset"],
-         "origen": origen_reps, "registros_nacionales": len(filas_reps),
+         "origen": origen_reps,
+         "corte_de_los_datos": corte_de_los_datos(cols_reps, filas_reps),
+         "registros_nacionales": len(filas_reps),
          "registros_en_departamentos": len(sedes)},
         {"fuente": FUENTES["solidarias"]["titulo"],
          "dataset": FUENTES["solidarias"]["dataset"], "origen": origen_sol,
+         "corte_de_los_datos": corte_de_los_datos(cols_sol, filas_sol),
          "registros_nacionales": len(filas_sol),
          "registros_en_departamentos": len(entidades)},
     ]
@@ -768,10 +853,11 @@ def main(argv=None):
 
     print()
     print(f"{'Departamento':<22}{'IPS':>8}{'Sedes IPS':>11}"
-          f"{'IPS coop.':>11}{'Cooperativas':>14}")
+          f"{'IPS coop.':>11}{'Cooperativas':>14}{'Coop. activas':>15}")
     for f in filas_resumen:
         print(f"{f['departamento']:<22}{f['ips']:>8}{f['sedes_de_ips']:>11}"
-              f"{f['ips_cooperativas']:>11}{f['cooperativas']:>14}")
+              f"{f['ips_cooperativas']:>11}{f['cooperativas']:>14}"
+              f"{f['cooperativas_que_reportan_actualmente']:>15}")
     print(f"\nListo. Resultado en {salida.resolve()}:")
     print(f"  - {ruta_sqlite.name}")
     print(f"  - {ruta_excel.name}")

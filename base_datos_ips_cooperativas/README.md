@@ -19,6 +19,18 @@ que la base siempre queda al día.
 | Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) | Ministerio de Salud | [`c36g-9fc2`](https://www.datos.gov.co/d/c36g-9fc2) |
 | Listado de Entidades del Sector Solidario | Supersolidaria | [`kg2d-yfyg`](https://www.datos.gov.co/d/kg2d-yfyg) |
 
+## La base de datos ya construida
+
+La carpeta [`resultado/`](resultado/) tiene la base de datos ya armada con
+los registros oficiales (ver la hoja **Fuentes** para la fecha de corte de
+cada registro). Abre `resultado/IPS_y_Cooperativas.xlsx` en Excel.
+
+Para actualizarla más adelante, ejecuta el programa en tu computador (ver
+abajo) o, desde GitHub, en la pestaña **Actions** → **Construir base de
+datos de IPS y cooperativas** → **Run workflow** (disponible cuando el
+cambio esté en la rama principal). GitHub descarga los registros, arma la
+base y guarda el resultado en `resultado/`.
+
 ## Instalación (Windows)
 
 1. Instala [Python 3.10+](https://www.python.org/downloads/) marcando la
@@ -43,7 +55,8 @@ Todo queda en la carpeta `salida/`:
     principal y el número de sedes que tiene en ese departamento.
   - **Sedes IPS**: todas las sedes de las IPS, con dirección y teléfono de
     cada una.
-  - **Cooperativas**: todas las cooperativas y precooperativas.
+  - **Cooperativas**: todas las cooperativas y precooperativas, con la
+    fecha de su último reporte a la Supersolidaria.
   - **IPS cooperativas**: las IPS que además son cooperativas.
   - **Fuentes**: de dónde salió cada dato y la fecha en que se construyó la
     base.
@@ -68,6 +81,8 @@ las columnas originales del registro oficial:
 | `bd_es_ips` | `SI` si la clase de prestador es IPS. |
 | `bd_num_sedes` | Número de sedes de la IPS en ese departamento. |
 | `bd_es_cooperativa` | `SI` si la entidad es una cooperativa. |
+| `bd_reporta_actualmente` | `SI` si la cooperativa le reportó a la Supersolidaria en los últimos 12 meses del listado; `NO` suele indicar que está inactiva o en liquidación. |
+| `bd_ultimo_reporte` | Fecha del último reporte de la entidad a la Supersolidaria. |
 | `bd_criterio_cooperativa` | Por qué se marcó la IPS como cooperativa: su NIT está registrado como cooperativa en la Supersolidaria, o su razón social es de cooperativa. |
 
 ## Criterios
@@ -79,12 +94,20 @@ las columnas originales del registro oficial:
 - **Departamento de una IPS**: el de cada **sede**, no el del domicilio del
   prestador. Una IPS de Bogotá con una sede en Medellín aparece en
   Antioquia con esa sede.
-- **Cooperativas**: entidades de la Supersolidaria cuyo tipo o razón social
-  es cooperativa, precooperativa u organismo cooperativo. Las
-  instituciones auxiliares del cooperativismo, los fondos de empleados y
-  las asociaciones mutuales no cuentan como cooperativas, pero quedan en
-  `entidades_solidarias`. Si el listado trae varios cortes de una misma
-  entidad, se deja el más reciente.
+- **Cooperativas**: entidades de la Supersolidaria cuyo tipo es de
+  cooperativa (multiactiva, especializada, integral, de trabajo asociado,
+  de aportes y crédito, precooperativa, administración pública cooperativa
+  u organismo de carácter económico) o cuya razón social dice
+  "cooperativa". Los fondos de empleados y las asociaciones mutuales nunca
+  cuentan como cooperativas; quedan en `entidades_solidarias` junto con las
+  instituciones auxiliares y demás entidades del sector.
+- **Un registro por entidad**: el listado de la Supersolidaria trae un
+  registro por cada reporte desde 2017; se deja el más reciente de cada
+  NIT. Se incluyen todas las cooperativas registradas, también las que ya
+  no reportan; la columna `bd_reporta_actualmente` las distingue.
+- **IPS cooperativas**: IPS cuyo NIT está registrado como cooperativa en la
+  Supersolidaria (en cualquier departamento), o cuya razón social dice
+  "cooperativa".
 - **Bogotá D.C.** es un distrito aparte de Cundinamarca en los registros
   oficiales, así que no se incluye. Para incluirla:
 

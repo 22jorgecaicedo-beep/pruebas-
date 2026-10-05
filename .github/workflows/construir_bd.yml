@@ -27,30 +27,6 @@ jobs:
         working-directory: base_datos_ips_cooperativas
         run: python construir_bd.py
 
-      - name: Diagnóstico de las fuentes
-        if: always()
-        run: |
-          python - <<'PY'
-          import collections, sys
-          from pathlib import Path
-          sys.path.insert(0, "base_datos_ips_cooperativas")
-          import construir_bd as bd
-          for ruta in sorted(Path("base_datos_ips_cooperativas/salida/fuentes").glob("*.csv")):
-              cols, filas = bd.leer_tabla(ruta)
-              print(f"===== {ruta.name}: {len(filas)} filas")
-              print("Columnas:", cols)
-              for fila in filas[:3]:
-                  print(fila)
-              for c in cols:
-                  k = bd.clave(c)
-                  if any(p in k for p in ("depa", "dpto", "clase", "tipo", "estado", "natur",
-                                          "nivel", "corte", "principal", "organiz", "habilit")):
-                      conteo = collections.Counter(f[c] for f in filas)
-                      print(f"--- {c}: {len(conteo)} valores distintos")
-                      for valor, n in conteo.most_common(60):
-                          print(f"   {n:>7}  {valor}")
-          PY
-
       - name: Guardar el resultado en la rama
         run: |
           destino=base_datos_ips_cooperativas/resultado

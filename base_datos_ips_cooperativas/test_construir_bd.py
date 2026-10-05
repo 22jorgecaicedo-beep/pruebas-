@@ -59,25 +59,40 @@ REPS = [
 ]
 
 SOLIDARIAS = [
-    ["NIT", "DÍGITO DE VERIFICACIÓN", "RAZÓN SOCIAL", "SIGLA", "TIPO DE ENTIDAD",
-     "CÓDIGO DEPARTAMENTO", "DEPARTAMENTO", "MUNICIPIO", "DIRECCIÓN",
-     "FECHA DE CORTE"],
-    # Dos cortes de la misma cooperativa: queda el mas reciente.
-    ["890900111", "1", "COOPERATIVA VIEJA", "", "COOPERATIVA DE AHORRO Y CREDITO",
-     "05", "ANTIOQUIA", "MEDELLIN", "CL 10", "01/31/2025 12:00:00 AM"],
-    ["890900111", "1", "COOPERATIVA ANTIOQUEÑA", "COOPANT", "COOPERATIVA DE AHORRO Y CREDITO",
-     "05", "ANTIOQUIA", "MEDELLIN", "CL 10", "08/31/2026 12:00:00 AM"],
-    ["800100200", "2", "FONDO DE EMPLEADOS DEL CARIBE", "FONCARIBE", "FONDO DE EMPLEADOS",
-     "08", "ATLANTICO", "BARRANQUILLA", "CL 11", "08/31/2026 12:00:00 AM"],
-    ["800100300", "3", "INSTITUTO DEL COOPERATIVISMO", "", "INSTITUCION AUXILIAR DEL COOPERATIVISMO",
-     "13", "BOLIVAR", "CARTAGENA", "CL 12", "08/31/2026 12:00:00 AM"],
-    ["800100400", "4", "PRECOOPERATIVA DEL MAR", "", "PRECOOPERATIVA",
-     "13", "BOLÍVAR", "CARTAGENA", "CL 13", "08/31/2026 12:00:00 AM"],
-    ["800100500", "5", "COOPERATIVA DE TRABAJO ASOCIADO NORTE", "", "COOPERATIVA DE TRABAJO ASOCIADO",
-     "54", "", "CUCUTA", "CL 14", "08/31/2026 12:00:00 AM"],
+    # Mismo formato que el listado real: un registro por cada reporte.
+    ["codentidad", "fechaultirepo", "mes", "ano", "nombreentidad", "sigla", "nit",
+     "nombretipo", "departamento", "municipio", "direccion", "supervision"],
+    # Dos reportes de la misma cooperativa: queda el mas reciente.
+    ["1", "12/31/2025 05:00:00 PM", "DICIEMBRE", "2025", "COOPERATIVA VIEJA", "",
+     "890-900-111-1", "Especializada de ahorro y credito", "ANTIOQUIA", "MEDELLÍN",
+     "CL 10", "1"],
+    ["1", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "COOPERATIVA ANTIOQUEÑA", "COOPANT",
+     "890-900-111-1", "Especializada de ahorro y credito", "ANTIOQUIA", "MEDELLÍN",
+     "CL 10", "1"],
+    # Cooperativa cuyo nombre tiene un error de digitacion: cuenta por su tipo.
+    ["2", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "COOPERATVA DE MILITARES", "",
+     "800-100-600-6", "Multiactiva sin seccion de ahorro", "ANTIOQUIA", "BELLO",
+     "CL 16", "3"],
+    # Cooperativa que dejo de reportar hace anios.
+    ["3", "12/31/2019 05:00:00 PM", "DICIEMBRE", "2019", "COOPERATIVA INACTIVA", "",
+     "800-100-700-7", "Multiactiva sin seccion de ahorro", "CUNDINAMARCA", "CHÍA",
+     "CL 17", "3"],
+    # Departamento con la codificacion danada, como llega en el listado real.
+    ["4", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "FONDO DE EMPLEADOS DEL CARIBE",
+     "FONCARIBE", "800-100-200-2", "Fondos de empleados", "ATLÃ\x81NTICO",
+     "BARRANQUILLA", "CL 11", "2"],
+    ["5", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "INSTITUTO DEL COOPERATIVISMO", "",
+     "800-100-300-3", "Instituciones auxiliares especializadas", "BOLÃ\x8dVAR",
+     "CARTAGENA", "CL 12", "3"],
+    ["6", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "PRECOOPERATIVA DEL MAR", "",
+     "800-100-400-4", "Precooperativas", "BOLÃ\x8dVAR", "CARTAGENA", "CL 13", "3"],
+    ["7", "07/31/2026 05:00:00 PM", "JULIO", "2026",
+     "COOPERATIVA DE TRABAJO ASOCIADO NORTE", "", "800-100-500-5",
+     "Cooperativas de trabajo asociado", "NORTE DE SANTANDER", "CÚCUTA", "CL 14", "1"],
     # Cooperativa fuera de los departamentos; su NIT marca a la IPS de Bolivar.
-    ["890123456", "7", "COOPERATIVA DEL VALLE", "", "COOPERATIVA MULTIACTIVA",
-     "76", "VALLE DEL CAUCA", "CALI", "CL 15", "08/31/2026 12:00:00 AM"],
+    ["8", "06/30/2026 05:00:00 PM", "JUNIO", "2026", "COOPERATIVA DEL VALLE", "",
+     "890-123-456-7", "Multiactiva con ahorro y credito", "VALLE DEL CAUCA", "CALI",
+     "CL 15", "1"],
 ]
 
 
@@ -113,7 +128,8 @@ class PruebasTexto(unittest.TestCase):
         self.assertEqual(bd.departamento_de("11", con_bogota), "BOGOTÁ D.C.")
 
     def test_normalizar_nit(self):
-        for valor in ("890.123.456-7", "8901234567", "890123456", "890123456.0"):
+        for valor in ("890.123.456-7", "890-123-456-7", "8901234567", "890123456",
+                      "890123456.0", "890-123-456"):
             self.assertEqual(bd.normalizar_nit(valor), "890123456", valor)
         self.assertEqual(bd.normalizar_nit("72123456"), "72123456")
         self.assertEqual(bd.normalizar_nit(""), "")
@@ -125,6 +141,12 @@ class PruebasTexto(unittest.TestCase):
         for texto in ("INSTITUCION AUXILIAR DEL COOPERATIVISMO", "COOPSALUD",
                       "FONDO DE EMPLEADOS"):
             self.assertFalse(bd.PATRON_COOPERATIVA.search(texto), texto)
+
+    def test_reparar_texto(self):
+        self.assertEqual(bd.reparar_texto("BOLÃ\x8dVAR"), "BOLÍVAR")
+        self.assertEqual(bd.reparar_texto("ATLÃ\x81NTICO"), "ATLÁNTICO")
+        self.assertEqual(bd.reparar_texto("NARIÃ‘O"), "NARIÑO")
+        self.assertEqual(bd.reparar_texto("BOGOTÁ, D.C."), "BOGOTÁ, D.C.")
 
     def test_nombre_columna(self):
         self.assertEqual(bd.nombre_columna("NombrePrestador"), "nombre_prestador")
@@ -139,6 +161,9 @@ class PruebasTexto(unittest.TestCase):
         self.assertEqual(bd.clave_fecha("2026-08-31T00:00:00.000"), (2026, 8, 31))
         self.assertEqual(bd.clave_fecha("31/08/2026"), (2026, 8, 31))
         self.assertEqual(bd.clave_fecha("202608"), (2026, 8, 0))
+        self.assertEqual(bd.clave_fecha("Fecha corte REPS: Mar 12 2026  3:11PM"),
+                         (2026, 3, 12))
+        self.assertEqual(bd.restar_meses((2026, 7, 31), 12), (2025, 7, 31))
 
 
 class PruebaCompleta(unittest.TestCase):
@@ -182,27 +207,35 @@ class PruebaCompleta(unittest.TestCase):
     def test_cooperativas(self):
         _, con = self.construir()
         filas = con.execute(
-            "SELECT bd_departamento, razon_social FROM cooperativas "
-            "ORDER BY bd_departamento").fetchall()
+            "SELECT bd_departamento, bd_municipio, nombreentidad, bd_reporta_actualmente, "
+            "bd_ultimo_reporte FROM cooperativas ORDER BY bd_departamento, "
+            "nombreentidad").fetchall()
         self.assertEqual(filas, [
-            ("ANTIOQUIA", "COOPERATIVA ANTIOQUEÑA"),
-            ("BOLÍVAR", "PRECOOPERATIVA DEL MAR"),
-            ("NORTE DE SANTANDER", "COOPERATIVA DE TRABAJO ASOCIADO NORTE"),
+            ("ANTIOQUIA", "MEDELLIN", "COOPERATIVA ANTIOQUEÑA", "SI", "2026-06-30"),
+            ("ANTIOQUIA", "BELLO", "COOPERATVA DE MILITARES", "SI", "2026-06-30"),
+            ("BOLÍVAR", "CARTAGENA", "PRECOOPERATIVA DEL MAR", "SI", "2026-06-30"),
+            ("CUNDINAMARCA", "CHIA", "COOPERATIVA INACTIVA", "NO", "2019-12-31"),
+            ("NORTE DE SANTANDER", "CUCUTA", "COOPERATIVA DE TRABAJO ASOCIADO NORTE",
+             "SI", "2026-07-31"),
         ])
         self.assertEqual(con.execute(
-            "SELECT razon_social, bd_es_cooperativa FROM entidades_solidarias "
-            "WHERE bd_es_cooperativa = 'NO' ORDER BY razon_social").fetchall(), [
-            ("FONDO DE EMPLEADOS DEL CARIBE", "NO"),
-            ("INSTITUTO DEL COOPERATIVISMO", "NO"),
+            "SELECT bd_departamento, nombreentidad FROM entidades_solidarias "
+            "WHERE bd_es_cooperativa = 'NO' ORDER BY nombreentidad").fetchall(), [
+            ("ATLÁNTICO", "FONDO DE EMPLEADOS DEL CARIBE"),
+            ("BOLÍVAR", "INSTITUTO DEL COOPERATIVISMO"),
         ])
+        self.assertEqual(con.execute(
+            "SELECT corte_de_los_datos FROM fuentes ORDER BY dataset").fetchall(),
+            [("",), ("2026-07-31",)])
 
     def test_resumen_y_archivos(self):
         salida, con = self.construir()
         total = con.execute(
             "SELECT ips, sedes_de_ips, ips_cooperativas, otras_sedes_reps_no_ips, "
-            "cooperativas, otras_entidades_solidarias FROM resumen "
+            "cooperativas, cooperativas_que_reportan_actualmente, "
+            "otras_entidades_solidarias FROM resumen "
             "WHERE departamento = 'TOTAL'").fetchone()
-        self.assertEqual(total, (4, 5, 2, 1, 3, 2))
+        self.assertEqual(total, (4, 5, 2, 1, 5, 4, 2))
 
         from openpyxl import load_workbook
         libro = load_workbook(salida / bd.NOMBRE_EXCEL)
