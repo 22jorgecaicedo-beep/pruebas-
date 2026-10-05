@@ -1,0 +1,126 @@
+# Base de datos de IPS y cooperativas
+
+Arma una base de datos con **todas las IPS registradas** y **todas las
+cooperativas** de:
+
+- Antioquia
+- Atlántico
+- Bolívar
+- Cundinamarca
+- Norte de Santander
+
+a partir de los registros oficiales publicados en
+[datos.gov.co](https://www.datos.gov.co). Los datos no se escriben a mano:
+cada vez que lo ejecutas descarga la versión vigente de los registros, así
+que la base siempre queda al día.
+
+| Fuente | Entidad | Dataset |
+|---|---|---|
+| Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) | Ministerio de Salud | [`c36g-9fc2`](https://www.datos.gov.co/d/c36g-9fc2) |
+| Listado de Entidades del Sector Solidario | Supersolidaria | [`kg2d-yfyg`](https://www.datos.gov.co/d/kg2d-yfyg) |
+
+## Instalación (Windows)
+
+1. Instala [Python 3.10+](https://www.python.org/downloads/) marcando la
+   opción "Add Python to PATH" durante la instalación.
+2. Haz doble clic en `construir_bd.bat`. Instala lo necesario (solo
+   `openpyxl`), descarga los registros y arma la base de datos.
+
+O desde una terminal en esta carpeta:
+
+```
+pip install -r requirements.txt
+python construir_bd.py
+```
+
+## Qué produce
+
+Todo queda en la carpeta `salida/`:
+
+- `IPS_y_Cooperativas.xlsx`: libro de Excel con las hojas:
+  - **Resumen**: cuántas IPS, sedes y cooperativas hay en cada departamento.
+  - **IPS**: una fila por IPS y departamento, con los datos de su sede
+    principal y el número de sedes que tiene en ese departamento.
+  - **Sedes IPS**: todas las sedes de las IPS, con dirección y teléfono de
+    cada una.
+  - **Cooperativas**: todas las cooperativas y precooperativas.
+  - **IPS cooperativas**: las IPS que además son cooperativas.
+  - **Fuentes**: de dónde salió cada dato y la fecha en que se construyó la
+    base.
+- `ips_cooperativas.sqlite`: las mismas tablas en una base de datos SQLite
+  (se abre con [DB Browser for SQLite](https://sqlitebrowser.org/), Power BI,
+  Access, etc.), más dos tablas completas:
+  - `reps_todas_las_sedes`: todo el REPS de los departamentos, incluidos
+    profesionales independientes, transporte especial de pacientes y
+    entidades con objeto social diferente.
+  - `entidades_solidarias`: todo el sector solidario de los departamentos,
+    incluidos fondos de empleados y asociaciones mutuales.
+- `csv/`: cada tabla en un CSV separado por `;` (se abre directo en Excel).
+- `fuentes/`: los archivos originales descargados, tal cual.
+
+Las columnas que empiezan por `bd_` las calcula el programa; el resto son
+las columnas originales del registro oficial:
+
+| Columna | Significado |
+|---|---|
+| `bd_departamento` | Departamento donde está la sede o la entidad. |
+| `bd_municipio` | Municipio donde está la sede o la entidad. |
+| `bd_es_ips` | `SI` si la clase de prestador es IPS. |
+| `bd_num_sedes` | Número de sedes de la IPS en ese departamento. |
+| `bd_es_cooperativa` | `SI` si la entidad es una cooperativa. |
+| `bd_criterio_cooperativa` | Por qué se marcó la IPS como cooperativa: su NIT está registrado como cooperativa en la Supersolidaria, o su razón social es de cooperativa. |
+
+## Criterios
+
+- **IPS**: prestadores del REPS cuya clase es "Instituciones Prestadoras de
+  Servicios de Salud - IPS". Los profesionales independientes, el
+  transporte especial de pacientes y las entidades con objeto social
+  diferente quedan solo en `reps_todas_las_sedes`.
+- **Departamento de una IPS**: el de cada **sede**, no el del domicilio del
+  prestador. Una IPS de Bogotá con una sede en Medellín aparece en
+  Antioquia con esa sede.
+- **Cooperativas**: entidades de la Supersolidaria cuyo tipo o razón social
+  es cooperativa, precooperativa u organismo cooperativo. Las
+  instituciones auxiliares del cooperativismo, los fondos de empleados y
+  las asociaciones mutuales no cuentan como cooperativas, pero quedan en
+  `entidades_solidarias`. Si el listado trae varios cortes de una misma
+  entidad, se deja el más reciente.
+- **Bogotá D.C.** es un distrito aparte de Cundinamarca en los registros
+  oficiales, así que no se incluye. Para incluirla:
+
+  ```
+  python construir_bd.py --incluir-bogota
+  ```
+
+Para cambiar los departamentos, edita `DEPARTAMENTOS` al inicio de
+`construir_bd.py`.
+
+## Si la descarga falla
+
+Si www.datos.gov.co no responde, el programa usa la última copia que haya
+descargado en `salida/fuentes/`. Si nunca se ha descargado, puedes bajar
+los archivos a mano y pasárselos:
+
+1. Abre cada dataset (enlaces de la tabla de arriba), pulsa **Exportar** y
+   descarga el **CSV**.
+2. Ejecuta:
+
+   ```
+   python construir_bd.py --archivo-reps "C:\ruta\reps.csv" --archivo-solidarias "C:\ruta\solidarias.csv"
+   ```
+
+También acepta archivos `.xlsx`, por ejemplo una exportación más reciente
+hecha desde el portal del REPS
+([prestadores.minsalud.gov.co](https://prestadores.minsalud.gov.co/habilitacion/)).
+
+Si descargas muchas veces seguidas y datos.gov.co empieza a limitar las
+descargas, crea un token de aplicación gratuito en datos.gov.co y pásalo
+con `--app-token TU_TOKEN`.
+
+## Pruebas
+
+```
+python -m unittest test_construir_bd
+```
+
+Las pruebas usan archivos de ejemplo y no necesitan internet.

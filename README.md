@@ -82,3 +82,10 @@ técnicas estándar para reducir esa detección. Por eso esa parte se
 descartó: la descarga sigue siendo manual (como siempre la has hecho),
 y este organizador se encarga de la parte que sí funciona de forma
 confiable: extraer y organizar lo que ya descargaste.
+
+## Otras herramientas en este repositorio
+
+- [`base_datos_ips_cooperativas/`](base_datos_ips_cooperativas/README.md):
+  arma una base de datos (Excel, SQLite y CSV) con todas las IPS
+  registradas en el REPS y todas las cooperativas de la Supersolidaria de
+  Antioquia, Atlántico, Bolívar, Cundinamarca y Norte de Santander.
