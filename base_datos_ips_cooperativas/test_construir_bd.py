@@ -52,6 +52,17 @@ REPS = [
     ["1300100007", "SERVISALUD BOLIVAR", "130010000701", "SERVISALUD",
      "SI", "NI", "890.123.456-7", "Instituciones Prestadoras de Servicios de Salud - IPS",
      "Privada", "Bolívar", "CARTAGENA", "Bolívar", "CARTAGENA", "CL 4", "888"],
+    # La misma IPS (mismo NIT) inscrita en dos departamentos con codigos de
+    # prestador distintos: debe quedar una sola vez en la hoja IPS.
+    ["0800103693", "DAVITA S.A.S.", "080010369301", "DAVITA BARRANQUILLA",
+     "SI", "NI", "900532504", "Instituciones Prestadoras de Servicios de Salud - IPS",
+     "Privada", "Atlántico", "BARRANQUILLA", "Atlántico", "BARRANQUILLA", "CL 6", "101"],
+    ["0800103693", "DAVITA S.A.S.", "080010369302", "DAVITA NORTE",
+     "NO", "NI", "900532504", "Instituciones Prestadoras de Servicios de Salud - IPS",
+     "Privada", "Atlántico", "BARRANQUILLA", "Atlántico", "BARRANQUILLA", "CL 7", "102"],
+    ["1300103270", "DAVITA S.A.S.", "130010327001", "DAVITA CARTAGENA",
+     "SI", "NI", "900532504", "Instituciones Prestadoras de Servicios de Salud - IPS",
+     "Privada", "Bolívar", "CARTAGENA", "Bolívar", "CARTAGENA", "CL 8", "103"],
     # IPS que es cooperativa por su razon social.
     ["2530700008", "COOPERATIVA DE SALUD DE GIRARDOT", "253070000801", "COOPSALUD",
      "SI", "NI", "900777888", "Instituciones Prestadoras de Servicios de Salud - IPS",
@@ -189,6 +200,8 @@ class PruebaCompleta(unittest.TestCase):
             "ORDER BY bd_departamento, nombre_prestador").fetchall()
         self.assertEqual(filas, [
             ("ANTIOQUIA", "MEDELLIN", "CLINICA SAN JUAN SAS", 2, "SEDE PRINCIPAL", "NO", ""),
+            ("ATLÁNTICO", "BARRANQUILLA", "DAVITA S.A.S.", 3, "DAVITA BARRANQUILLA",
+             "NO", ""),
             ("BOLÍVAR", "CARTAGENA", "SERVISALUD BOLIVAR", 1, "SERVISALUD", "SI",
              "NIT registrado como cooperativa en la Supersolidaria"),
             ("CUNDINAMARCA", "GIRARDOT", "COOPERATIVA DE SALUD DE GIRARDOT", 1,
@@ -196,7 +209,11 @@ class PruebaCompleta(unittest.TestCase):
             ("NORTE DE SANTANDER", "CUCUTA", "IPS FRONTERA LTDA", 1, "IPS FRONTERA LTDA",
              "NO", ""),
         ])
-        self.assertEqual(con.execute("SELECT COUNT(*) FROM ips_sedes").fetchone(), (5,))
+        self.assertEqual(con.execute(
+            "SELECT bd_departamentos, bd_inscripciones_reps FROM ips "
+            "WHERE nombre_prestador = 'DAVITA S.A.S.'").fetchall(),
+            [("ATLÁNTICO, BOLÍVAR", 2)])
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM ips_sedes").fetchone(), (8,))
         self.assertEqual(con.execute("SELECT COUNT(*) FROM ips_cooperativas").fetchone(), (2,))
         # El profesional independiente queda en el REPS completo, no como IPS.
         self.assertEqual(con.execute(
@@ -235,7 +252,12 @@ class PruebaCompleta(unittest.TestCase):
             "cooperativas, cooperativas_que_reportan_actualmente, "
             "otras_entidades_solidarias FROM resumen "
             "WHERE departamento = 'TOTAL'").fetchone()
-        self.assertEqual(total, (4, 5, 2, 1, 5, 4, 2))
+        # Davita cuenta en Atlantico y en Bolivar, pero una sola vez en el total.
+        self.assertEqual(total, (5, 8, 2, 1, 5, 4, 2))
+        self.assertEqual(con.execute(
+            "SELECT departamento, ips FROM resumen WHERE departamento IN "
+            "('ATLÁNTICO', 'BOLÍVAR') ORDER BY 1").fetchall(),
+            [("ATLÁNTICO", 1), ("BOLÍVAR", 2)])
 
         from openpyxl import load_workbook
         libro = load_workbook(salida / bd.NOMBRE_EXCEL)
@@ -243,7 +265,7 @@ class PruebaCompleta(unittest.TestCase):
                                             "Cooperativas", "IPS cooperativas",
                                             "Fuentes"])
         hoja = libro["IPS"]
-        self.assertEqual(hoja.max_row, 5)
+        self.assertEqual(hoja.max_row, 6)  # 5 IPS + encabezado
         self.assertEqual(hoja.freeze_panes, "A2")
         self.assertTrue(hoja.auto_filter.ref)
         self.assertEqual(hoja["A1"].value, "bd_departamento")
@@ -254,7 +276,8 @@ class PruebaCompleta(unittest.TestCase):
         encabezados = ["codigo_prestador", "codigo_habilitacion_sede", "nombre_sede"]
         sedes = [
             {"codigo_prestador": "0523704806", "codigo_habilitacion_sede": cod,
-             "nombre_sede": nombre, "bd_es_ips": "SI", "bd_departamento": "ANTIOQUIA"}
+             "nombre_sede": nombre, "bd_es_ips": "SI", "bd_departamento": "ANTIOQUIA",
+             "bd_es_cooperativa": "NO", "bd_criterio_cooperativa": ""}
             for cod, nombre in (("052370480607", "SEDE BARBOSA"),
                                 ("052370480601", "SEDE DONMATIAS"),
                                 ("052370480603", "SEDE GIRARDOTA"))]

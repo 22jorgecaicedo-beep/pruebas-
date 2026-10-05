@@ -571,14 +571,30 @@ def procesar_reps(encabezados, filas, objetivos, nits_cooperativas):
     return sedes
 
 
-def agrupar_ips(encabezados, sedes):
-    """Una fila por IPS y departamento, con el numero de sedes que tiene ahi.
-    Usa los datos de la sede principal cuando el REPS la identifica."""
+def identificador_ips(encabezados):
+    """Funcion que da la clave de la IPS de una sede: su NIT. El REPS inscribe
+    a una misma IPS una vez por cada municipio o distrito donde presta
+    servicios, cada vez con otro codigo de prestador, asi que el codigo no
+    sirve para reconocerla."""
     col_codigo = buscar_columna(encabezados, ("codigoprestador", "codprestador"))
     col_nit = columna_nit(encabezados)
     col_nombre = columna_nombre(encabezados)
+
+    def identificador(sede):
+        return ((col_nit and normalizar_nit(sede[col_nit]))
+                or (col_codigo and sede[col_codigo])
+                or (col_nombre and normalizar(sede[col_nombre]))
+                or id(sede))
+    return identificador
+
+
+def agrupar_ips(encabezados, sedes):
+    """Una fila por IPS, con todas sus sedes en los departamentos. Los datos
+    son los de la sede principal de su inscripcion con mas sedes."""
+    col_codigo = buscar_columna(encabezados, ("codigoprestador", "codprestador"))
     col_principal = buscar_columna(encabezados, ("sedeprincipal", "principal"))
     col_sede = buscar_columna(encabezados, ("codigohabilitacionsede", "codigosede"))
+    identificador = identificador_ips(encabezados)
 
     def es_principal(sede):
         if col_principal:
@@ -589,22 +605,31 @@ def agrupar_ips(encabezados, sedes):
 
     grupos = {}
     for sede in sedes:
-        if sede["bd_es_ips"] != "SI":
-            continue
-        identificador = (
-            (col_codigo and sede[col_codigo])
-            or (col_nit and normalizar_nit(sede[col_nit]))
-            or (col_nombre and normalizar(sede[col_nombre]))
-            or id(sede))
-        grupos.setdefault((identificador, sede["bd_departamento"]), []).append(sede)
+        if sede["bd_es_ips"] == "SI":
+            grupos.setdefault(identificador(sede), []).append(sede)
 
     ips = []
     for grupo in grupos.values():
+        inscripciones = {}
+        for sede in grupo:
+            inscripciones.setdefault(sede[col_codigo] if col_codigo else "", []).append(sede)
+        codigo = min(inscripciones, key=lambda c: (-len(inscripciones[c]), c))
+        candidatas = inscripciones[codigo]
         if col_sede:
-            grupo.sort(key=lambda sede: sede[col_sede])
-        principal = next((sede for sede in grupo if es_principal(sede)), grupo[0])
+            candidatas.sort(key=lambda sede: sede[col_sede])
+        principal = next((sede for sede in candidatas if es_principal(sede)),
+                         candidatas[0])
+
         fila = dict(principal)
+        fila["bd_departamentos"] = ", ".join(
+            sorted({sede["bd_departamento"] for sede in grupo}, key=normalizar))
         fila["bd_num_sedes"] = len(grupo)
+        fila["bd_inscripciones_reps"] = len(inscripciones)
+        cooperativa = next((sede for sede in grupo
+                            if sede["bd_es_cooperativa"] == "SI"), None)
+        if cooperativa:
+            fila["bd_es_cooperativa"] = "SI"
+            fila["bd_criterio_cooperativa"] = cooperativa["bd_criterio_cooperativa"]
         ips.append(fila)
     return ips
 
@@ -617,7 +642,15 @@ def ordenar(filas, encabezados):
         normalizar(f.get(col_nombre, "")) if col_nombre else ""))
 
 
-def resumen(objetivos, ips, sedes, entidades):
+def resumen(objetivos, sedes, entidades, identificador):
+    """Totales por departamento. Una IPS con sedes en varios departamentos
+    cuenta en cada uno, pero una sola vez en el total."""
+    def contar_ips(departamento=None, **condiciones):
+        return len({identificador(f) for f in sedes
+                    if f["bd_es_ips"] == "SI"
+                    and departamento in (None, f["bd_departamento"])
+                    and all(f.get(k) == v for k, v in condiciones.items())})
+
     filas = []
     for departamento in sorted(objetivos, key=normalizar):
         def contar(lista, **condiciones):
@@ -625,9 +658,9 @@ def resumen(objetivos, ips, sedes, entidades):
                        and all(f.get(k) == v for k, v in condiciones.items()))
         filas.append({
             "departamento": departamento,
-            "ips": contar(ips),
+            "ips": contar_ips(departamento),
             "sedes_de_ips": contar(sedes, bd_es_ips="SI"),
-            "ips_cooperativas": contar(ips, bd_es_cooperativa="SI"),
+            "ips_cooperativas": contar_ips(departamento, bd_es_cooperativa="SI"),
             "otras_sedes_reps_no_ips": contar(sedes, bd_es_ips="NO"),
             "cooperativas": contar(entidades, bd_es_cooperativa="SI"),
             "cooperativas_que_reportan_actualmente": contar(
@@ -638,6 +671,8 @@ def resumen(objetivos, ips, sedes, entidades):
     for clave_total in filas[0]:
         if clave_total != "departamento":
             total[clave_total] = sum(f[clave_total] for f in filas)
+    total["ips"] = contar_ips()
+    total["ips_cooperativas"] = contar_ips(bd_es_cooperativa="SI")
     return filas + [total]
 
 
@@ -803,8 +838,9 @@ def main(argv=None):
     calc_reps = ["bd_departamento", "bd_municipio", "bd_es_ips",
                  "bd_es_cooperativa", "bd_criterio_cooperativa"]
     cols_sedes = columnas_de(cols_reps, calc_reps)
-    cols_ips = columnas_de(cols_reps, calc_reps[:2] + ["bd_num_sedes"]
-                           + calc_reps[3:])
+    cols_ips = columnas_de(cols_reps, calc_reps[:2] + [
+        "bd_departamentos", "bd_num_sedes", "bd_inscripciones_reps"]
+        + calc_reps[3:])
     calc_sol = ["bd_departamento", "bd_municipio", "bd_es_cooperativa"]
     if columna_corte(cols_sol):
         calc_sol += ["bd_reporta_actualmente", "bd_ultimo_reporte"]
@@ -817,7 +853,8 @@ def main(argv=None):
     ips_cooperativas = [i for i in ips if i["bd_es_cooperativa"] == "SI"]
     sedes_ips = [s for s in sedes if s["bd_es_ips"] == "SI"]
 
-    filas_resumen = resumen(objetivos, ips, sedes, entidades)
+    filas_resumen = resumen(objetivos, sedes, entidades,
+                            identificador_ips(cols_reps))
     cols_resumen = list(filas_resumen[0])
     fuentes = [
         {"fuente": FUENTES["reps"]["titulo"], "dataset": FUENTES["reps"]["dataset"],

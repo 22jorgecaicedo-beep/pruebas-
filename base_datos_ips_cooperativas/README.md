@@ -51,8 +51,8 @@ Todo queda en la carpeta `salida/`:
 
 - `IPS_y_Cooperativas.xlsx`: libro de Excel con las hojas:
   - **Resumen**: cuántas IPS, sedes y cooperativas hay en cada departamento.
-  - **IPS**: una fila por IPS y departamento, con los datos de su sede
-    principal y el número de sedes que tiene en ese departamento.
+  - **IPS**: una fila por IPS (por NIT), sin repetidas, con los datos de su
+    sede principal, el total de sedes y los departamentos donde tiene sedes.
   - **Sedes IPS**: todas las sedes de las IPS, con dirección y teléfono de
     cada una.
   - **Cooperativas**: todas las cooperativas y precooperativas, con la
@@ -76,10 +76,12 @@ las columnas originales del registro oficial:
 
 | Columna | Significado |
 |---|---|
-| `bd_departamento` | Departamento donde está la sede o la entidad. |
-| `bd_municipio` | Municipio donde está la sede o la entidad. |
+| `bd_departamento` | Departamento donde está la sede o la entidad (en la hoja IPS, el de su sede principal). |
+| `bd_municipio` | Municipio donde está la sede o la entidad (en la hoja IPS, el de su sede principal). |
+| `bd_departamentos` | Todos los departamentos donde la IPS tiene sedes. |
 | `bd_es_ips` | `SI` si la clase de prestador es IPS. |
-| `bd_num_sedes` | Número de sedes de la IPS en ese departamento. |
+| `bd_num_sedes` | Número de sedes de la IPS en los cinco departamentos. |
+| `bd_inscripciones_reps` | Cuántas inscripciones (códigos de prestador) tiene la IPS en el REPS; ver "Una fila por IPS". |
 | `bd_es_cooperativa` | `SI` si la entidad es una cooperativa. |
 | `bd_reporta_actualmente` | `SI` si la cooperativa le reportó a la Supersolidaria en los últimos 12 meses del listado; `NO` suele indicar que está inactiva o en liquidación. |
 | `bd_ultimo_reporte` | Fecha del último reporte de la entidad a la Supersolidaria. |
@@ -94,6 +96,14 @@ las columnas originales del registro oficial:
 - **Departamento de una IPS**: el de cada **sede**, no el del domicilio del
   prestador. Una IPS de Bogotá con una sede en Medellín aparece en
   Antioquia con esa sede.
+- **Una fila por IPS**: el REPS inscribe a una misma IPS una vez por cada
+  municipio o distrito donde presta servicios, cada vez con otro código de
+  prestador (Davita S.A.S. tiene 7 inscripciones en estos departamentos).
+  La hoja IPS las junta por NIT, así que cada IPS aparece una sola vez. En
+  el **Resumen**, una IPS con sedes en varios departamentos cuenta en cada
+  uno, pero una sola vez en el total. IPS distintas con el mismo nombre
+  (por ejemplo, varios "ESE Hospital San Juan de Dios") tienen NIT
+  distinto y se mantienen.
 - **Cooperativas**: entidades de la Supersolidaria cuyo tipo es de
   cooperativa (multiactiva, especializada, integral, de trabajo asociado,
   de aportes y crédito, precooperativa, administración pública cooperativa
