@@ -1,0 +1,58 @@
+name: Diagnóstico de consulta de activos
+
+on:
+  push:
+    branches: [claude/database-ips-cooperativas-dukd37]
+    paths:
+      - .github/workflows/diagnostico_activos.yml
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Probar consultas a los estados financieros
+        run: |
+          python - <<'PY'
+          import json, time, urllib.parse, urllib.request
+
+          def probar(nombre, url):
+              inicio = time.time()
+              try:
+                  peticion = urllib.request.Request(url, headers={"User-Agent": "diagnostico"})
+                  with urllib.request.urlopen(peticion, timeout=180) as respuesta:
+                      datos = respuesta.read()
+                  try:
+                      filas = json.loads(datos)
+                      resumen = f"{len(filas)} filas: {json.dumps(filas[:3], ensure_ascii=False)}"
+                  except ValueError:
+                      resumen = f"{len(datos)} bytes: {datos[:300]!r}"
+                  print(f"OK   {nombre} ({time.time() - inicio:.0f}s) {resumen}", flush=True)
+              except Exception as error:
+                  print(f"FALLA {nombre} ({time.time() - inicio:.0f}s) {error}", flush=True)
+
+          def soda(ds, **params):
+              return (f"https://www.datos.gov.co/resource/{ds}.json?"
+                      + urllib.parse.urlencode({f"${k}": v for k, v in params.items()}))
+
+          probar("s2ru limit 1", soda("s2ru-bqt6", limit=1))
+          probar("tic6 limit 1", soda("tic6-rbue", limit=1))
+          probar("tic6 un mes, cuenta activo",
+                 soda("tic6-rbue", where="codrenglon = 100000 AND a_o = 2026 AND mes = 'JUNIO'", limit=5))
+          probar("tic6 un mes, cuenta activo, texto",
+                 soda("tic6-rbue", where="codrenglon = '100000' AND a_o = '2026' AND mes = 'JUNIO'", limit=5))
+          probar("tic6 un NIT",
+                 soda("tic6-rbue", where="nit = '800-210-714-3' AND codrenglon = 100000", limit=5))
+          probar("tic6 nombre cuenta ACTIVO un mes",
+                 soda("tic6-rbue", where="nombre_cuenta = 'ACTIVO' AND a_o = 2026 AND mes = 'JUNIO'", limit=5))
+          probar("tic6 conteo un mes",
+                 soda("tic6-rbue", select="count(*)", where="a_o = 2026 AND mes = 'JUNIO'"))
+          probar("tic6 v3 query",
+                 "https://www.datos.gov.co/api/v3/views/tic6-rbue/query.json?"
+                 + urllib.parse.urlencode({"query": "SELECT a_o, mes, nit, valor_en_pesos WHERE codrenglon = 100000 AND a_o = 2026 AND mes = 'JUNIO' LIMIT 5"}))
+          probar("tic6 csv filtrado",
+                 "https://www.datos.gov.co/resource/tic6-rbue.csv?"
+                 + urllib.parse.urlencode({"$where": "codrenglon = 100000 AND a_o = 2026 AND mes = 'JUNIO'", "$limit": 5}))
+          PY
