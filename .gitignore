@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
 *.log
-base_datos_ips_cooperativas/salida/
+base_datos_ips_cooperativas/salida*/

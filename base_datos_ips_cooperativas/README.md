@@ -174,8 +174,16 @@ las columnas originales del registro oficial:
   python construir_bd.py --incluir-bogota
   ```
 
-Para cambiar los departamentos, edita `DEPARTAMENTOS` al inicio de
-`construir_bd.py`.
+Para armar la base de otros departamentos, pásalos con `--departamentos`
+(y una carpeta de salida distinta, para no reemplazar la de siempre):
+
+```
+python construir_bd.py --departamentos "Bogotá, Boyacá" --salida salida_bogota_boyaca
+```
+
+La carpeta [`resultado_bogota_boyaca/`](resultado_bogota_boyaca/) tiene ya
+armada la base de **Bogotá D.C. y Boyacá**, con los mismos archivos que
+`resultado/`.
 
 ## Si la descarga falla
 

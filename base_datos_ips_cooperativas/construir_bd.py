@@ -52,6 +52,19 @@ DEPARTAMENTOS = {
 # oficiales; solo se incluye si se ejecuta con --incluir-bogota.
 BOGOTA = ("BOGOTÁ D.C.", "11")
 
+# Todos los departamentos, para elegir otros con --departamentos.
+TODOS_LOS_DEPARTAMENTOS = {
+    "ANTIOQUIA": "05", "ATLÁNTICO": "08", "BOGOTÁ D.C.": "11", "BOLÍVAR": "13",
+    "BOYACÁ": "15", "CALDAS": "17", "CAQUETÁ": "18", "CAUCA": "19", "CESAR": "20",
+    "CÓRDOBA": "23", "CUNDINAMARCA": "25", "CHOCÓ": "27", "HUILA": "41",
+    "LA GUAJIRA": "44", "MAGDALENA": "47", "META": "50", "NARIÑO": "52",
+    "NORTE DE SANTANDER": "54", "QUINDÍO": "63", "RISARALDA": "66",
+    "SANTANDER": "68", "SUCRE": "70", "TOLIMA": "73", "VALLE DEL CAUCA": "76",
+    "ARAUCA": "81", "CASANARE": "85", "PUTUMAYO": "86", "SAN ANDRÉS": "88",
+    "AMAZONAS": "91", "GUAINÍA": "94", "GUAVIARE": "95", "VAUPÉS": "97",
+    "VICHADA": "99",
+}
+
 FUENTES = {
     "reps": {
         "titulo": "Registro Especial de Prestadores y Sedes de Servicios "
@@ -265,7 +278,17 @@ def restar_meses(clave_de_fecha, meses):
 
 # ---------------------------- Departamentos --------------------------------
 
-def construir_objetivos(incluir_bogota=False):
+def construir_objetivos(incluir_bogota=False, nombres=None):
+    """Los departamentos a incluir: los de DEPARTAMENTOS, o los de `nombres`
+    ("Bogotá, Boyacá") si se dan."""
+    if nombres:
+        objetivos = {}
+        for nombre in nombres:
+            departamento = departamento_de(nombre, TODOS_LOS_DEPARTAMENTOS)
+            if not departamento:
+                raise ValueError(f"departamento desconocido: {nombre.strip()}")
+            objetivos[departamento] = TODOS_LOS_DEPARTAMENTOS[departamento]
+        return objetivos
     objetivos = dict(DEPARTAMENTOS)
     if incluir_bogota:
         objetivos[BOGOTA[0]] = BOGOTA[1]
@@ -300,6 +323,8 @@ def departamento_de(valor, objetivos):
         letras = "NORTE DE SANTANDER"
     elif "BOGOTA" in letras or "DISTRITO CAPITAL" in letras:
         letras = normalizar(BOGOTA[0])
+    elif "SAN ANDRES" in letras:
+        letras = "SAN ANDRES"
     for nombre in objetivos:
         if normalizar(nombre).replace(".", " ").split() == letras.split() \
                 or normalizar(nombre) == letras:
@@ -1172,6 +1197,10 @@ def main(argv=None):
                     "Santander a partir de los registros oficiales.")
     parser.add_argument("--salida", default=str(CARPETA_SALIDA),
                         help="carpeta donde se guarda el resultado")
+    parser.add_argument("--departamentos",
+                        help="departamentos a incluir, separados por comas "
+                             '(por ejemplo "Bogotá, Boyacá"), en vez de los '
+                             "cinco de siempre")
     parser.add_argument("--incluir-bogota", action="store_true",
                         help="incluir también Bogotá D.C. (es un distrito "
                              "aparte de Cundinamarca)")
@@ -1197,7 +1226,13 @@ def main(argv=None):
     salida = Path(args.salida)
     carpeta_fuentes = salida / "fuentes"
     carpeta_fuentes.mkdir(parents=True, exist_ok=True)
-    objetivos = construir_objetivos(args.incluir_bogota)
+    try:
+        objetivos = construir_objetivos(
+            args.incluir_bogota,
+            args.departamentos.split(",") if args.departamentos else None)
+    except ValueError as error:
+        parser.error(f"{error}. Departamentos válidos: "
+                     + ", ".join(TODOS_LOS_DEPARTAMENTOS))
     ahora = datetime.datetime.now()
 
     print("Departamentos: " + ", ".join(objetivos))

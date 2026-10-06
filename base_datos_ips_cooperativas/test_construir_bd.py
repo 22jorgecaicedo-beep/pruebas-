@@ -64,6 +64,10 @@ REPS = [
     ["1300103270", "DAVITA S.A.S.", "130010327001", "DAVITA CARTAGENA",
      "SI", "NI", "900532504", "Instituciones Prestadoras de Servicios de Salud - IPS",
      "Privada", "Bolívar", "CARTAGENA", "Bolívar", "CARTAGENA", "CL 8", "103"],
+    # Boyaca: solo entra si se pide con --departamentos.
+    ["1500100009", "IPS TUNJA", "150010000901", "IPS TUNJA",
+     "SI", "NI", "900888999", "Instituciones Prestadoras de Servicios de Salud - IPS",
+     "Privada", "Boyacá", "TUNJA", "Boyacá", "TUNJA", "CL 9", "909"],
     # IPS que es cooperativa por su razon social.
     ["2530700008", "COOPERATIVA DE SALUD DE GIRARDOT", "253070000801", "COOPSALUD",
      "SI", "NI", "900777888", "Instituciones Prestadoras de Servicios de Salud - IPS",
@@ -492,6 +496,22 @@ class PruebaCompleta(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()), \
                 self.assertRaises(RuntimeError):
             bd.obtener_activos(None, carpeta / "vacia", None, ["800-100-600-6"])
+
+    def test_otros_departamentos(self):
+        _, con = self.construir("--departamentos", "Bogotá, Boyaca",
+                                "--archivo-capacidad", "no_existe.csv",
+                                "--archivo-activos", "no_existe.csv")
+        self.assertEqual(con.execute(
+            "SELECT bd_departamento, nombre_prestador FROM ips "
+            "ORDER BY bd_departamento, nombre_prestador").fetchall(), [
+            ("BOGOTÁ D.C.", "IPS CAPITAL"), ("BOGOTÁ D.C.", "IPS SOACHA"),
+            ("BOYACÁ", "IPS TUNJA")])
+        self.assertEqual([d for (d,) in con.execute("SELECT departamento FROM resumen")],
+                         ["BOGOTÁ D.C.", "BOYACÁ", "TOTAL"])
+
+    def test_departamento_desconocido(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            bd.main(["--departamentos", "Narnia"])
 
     def test_incluir_bogota(self):
         _, con = self.construir("--incluir-bogota", "--archivo-capacidad", "no_existe.csv",
