@@ -437,6 +437,21 @@ class PruebaCompleta(unittest.TestCase):
         correos = load_workbook(salida / bd.NOMBRE_CORREOS)["Correos"]
         self.assertEqual(correos["A1"].value, "Ranking tamaño")
 
+    def test_ranking_ips(self):
+        salida, _ = self.construir()
+        from openpyxl import load_workbook
+        libro = load_workbook(salida / bd.NOMBRE_RANKING)
+        self.assertEqual(libro.sheetnames, ["Ranking IPS", "Ranking IPS cooperativas"])
+        filas = list(libro["Ranking IPS"].iter_rows(values_only=True))
+        self.assertEqual(filas[0][:4], ("Ranking", "IPS", "NIT", "Es cooperativa"))
+        self.assertEqual([(f[0], f[1], f[8]) for f in filas[1:]], [
+            (1, "CLINICA SAN JUAN SAS", 125), (2, "DAVITA S.A.S.", 60),
+            (3, "COOPERATIVA DE SALUD DE GIRARDOT", 10), (4, "SERVISALUD BOLIVAR", 3),
+            (5, "IPS FRONTERA LTDA", None)])
+        cooperativas = list(libro["Ranking IPS cooperativas"].iter_rows(values_only=True))
+        self.assertEqual([(f[0], f[1]) for f in cooperativas[1:]],
+                         [(3, "COOPERATIVA DE SALUD DE GIRARDOT"), (4, "SERVISALUD BOLIVAR")])
+
     def test_sin_datos_de_tamano(self):
         # Si no hay capacidad ni activos, igual se arma la base: las IPS se
         # ordenan por numero de sedes.

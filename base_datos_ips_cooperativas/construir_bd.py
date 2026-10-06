@@ -89,6 +89,7 @@ CARPETA_SALIDA = Path(__file__).resolve().parent / "salida"
 NOMBRE_SQLITE = "ips_cooperativas.sqlite"
 NOMBRE_EXCEL = "IPS_y_Cooperativas.xlsx"
 NOMBRE_CORREOS = "Correos_IPS.xlsx"
+NOMBRE_RANKING = "Ranking_IPS.xlsx"
 
 INTENTOS_DESCARGA = 4
 TIMEOUT_DESCARGA_SEGUNDOS = 300
@@ -965,6 +966,55 @@ def ordenar_entidades_por_tamano(entidades, encabezados, activos):
     return entidades
 
 
+COLUMNAS_RANKING = [
+    "Ranking", "IPS", "NIT", "Es cooperativa", "Departamento", "Municipio",
+    "Departamentos con sedes", "Número de sedes", "Capacidad instalada", "Camas",
+    "Consultorios", "Salas", "Ambulancias", "Nivel de atención", "Naturaleza",
+    "Dirección", "Teléfono", "Correo"]
+
+
+def lista_ranking_ips(encabezados, ips):
+    """Las IPS ya ordenadas por tamano, solo con las columnas que sirven para
+    leer y contactar: nombre, ubicacion, tamano y datos de contacto."""
+    col_nombre = columna_nombre(encabezados)
+    col_nit = columna_nit(encabezados)
+    col_naturaleza = buscar_columna(encabezados, ("naturalezajuridica", "naturaleza"))
+    col_direccion = buscar_columna(encabezados, ("direccionprestador", "direccion"))
+    col_telefono = buscar_columna(encabezados, ("telefonoprestador", "telefono"))
+    cols_correo = sorted(columnas(encabezados, ("email", "correo")),
+                         key=lambda c: "sede" in clave(c))
+
+    def dato(fila, col):
+        return fila.get(col, "") if col else ""
+
+    filas = []
+    for ips_fila in ips:
+        # El correo de la IPS; si no trae uno valido, el de su sede principal.
+        correos = next((encontrados for c in cols_correo
+                        if (encontrados := extraer_correos(ips_fila.get(c, "")))), [])
+        filas.append({
+            "Ranking": ips_fila["bd_ranking_tamano"],
+            "IPS": dato(ips_fila, col_nombre),
+            "NIT": dato(ips_fila, col_nit),
+            "Es cooperativa": ips_fila["bd_es_cooperativa"],
+            "Departamento": ips_fila["bd_departamento"],
+            "Municipio": ips_fila["bd_municipio"],
+            "Departamentos con sedes": ips_fila["bd_departamentos"],
+            "Número de sedes": ips_fila["bd_num_sedes"],
+            "Capacidad instalada": ips_fila["bd_capacidad_instalada"],
+            "Camas": ips_fila["bd_camas"],
+            "Consultorios": ips_fila["bd_consultorios"],
+            "Salas": ips_fila["bd_salas"],
+            "Ambulancias": ips_fila["bd_ambulancias"],
+            "Nivel de atención": ips_fila["bd_nivel_atencion"],
+            "Naturaleza": dato(ips_fila, col_naturaleza),
+            "Dirección": dato(ips_fila, col_direccion),
+            "Teléfono": dato(ips_fila, col_telefono),
+            "Correo": "; ".join(correo for correo, _ in correos),
+        })
+    return filas
+
+
 def ordenar(filas, encabezados):
     """Por departamento, municipio y razon social."""
     col_nombre = columna_nombre(encabezados)
@@ -1295,6 +1345,12 @@ def main(argv=None):
                          "Valor en el REPS", "La IPS tiene otro correo válido"],
          revisar),
     ])
+    ranking_ips = lista_ranking_ips(cols_reps, ips)
+    ruta_ranking = guardar_excel(salida / NOMBRE_RANKING, [
+        ("Ranking IPS", COLUMNAS_RANKING, ranking_ips),
+        ("Ranking IPS cooperativas", COLUMNAS_RANKING,
+         [f for f in ranking_ips if f["Es cooperativa"] == "SI"]),
+    ])
 
     print()
     print(f"{'Departamento':<22}{'IPS':>8}{'Sedes IPS':>11}"
@@ -1307,6 +1363,7 @@ def main(argv=None):
     print(f"  - {ruta_sqlite.name}")
     print(f"  - {ruta_excel.name}")
     print(f"  - {ruta_correos.name} ({len(correos)} correos)")
+    print(f"  - {ruta_ranking.name} ({len(ranking_ips)} IPS)")
     print("  - csv/")
     return 0
 

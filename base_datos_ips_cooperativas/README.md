@@ -64,6 +64,11 @@ Todo queda en la carpeta `salida/`:
   - **IPS cooperativas**: las IPS que además son cooperativas.
   - **Fuentes**: de dónde salió cada dato y la fecha en que se construyó la
     base.
+- `Ranking_IPS.xlsx`: solo las IPS, de la más grande a la más pequeña, con
+  las columnas para leer y contactar (ranking, nombre, NIT, si es
+  cooperativa, ubicación, capacidad instalada, naturaleza, dirección,
+  teléfono y correo). Una hoja con todas las IPS y otra con las IPS
+  cooperativas.
 - `Correos_IPS.xlsx`: los correos de las IPS para envíos masivos, un
   registro por correo, sin repetidos:
   - **Correos**: todos los correos de las IPS, empezando por los de las IPS
