@@ -21,6 +21,7 @@ Resultado (en la carpeta "salida"):
 """
 
 import argparse
+import concurrent.futures
 import csv
 import datetime
 import http.client
@@ -79,7 +80,10 @@ URL_DESCARGA = ("https://www.datos.gov.co/api/views/{dataset}/rows.csv"
 URL_CONSULTA = "https://www.datos.gov.co/resource/{dataset}.json?{consulta}"
 # Cuenta del total de activos en los estados financieros de la Supersolidaria.
 CUENTA_ACTIVO = "100000"
-FILAS_POR_CONSULTA = 50000
+# Los estados financieros solo responden rapido si se filtra por NIT, asi que
+# se consulta entidad por entidad, varias a la vez.
+CONSULTAS_SIMULTANEAS = 8
+TIMEOUT_CONSULTA_SEGUNDOS = 60
 
 CARPETA_SALIDA = Path(__file__).resolve().parent / "salida"
 NOMBRE_SQLITE = "ips_cooperativas.sqlite"
@@ -491,61 +495,67 @@ def descargar(dataset, destino, app_token=None):
 
 
 def consultar(dataset, consulta, app_token=None):
-    """Filas de una consulta SoQL a datos.gov.co, pagina por pagina."""
+    """Filas de una consulta SoQL a datos.gov.co."""
     cabeceras = {"User-Agent": "base-datos-ips-cooperativas/1.0"}
     if app_token:
         cabeceras["X-App-Token"] = app_token
-    filas = []
-    while True:
-        pagina = {**consulta, "$limit": FILAS_POR_CONSULTA, "$offset": len(filas)}
-        url = URL_CONSULTA.format(dataset=dataset,
-                                  consulta=urllib.parse.urlencode(pagina))
-        for intento in range(1, INTENTOS_DESCARGA + 1):
-            try:
-                peticion = urllib.request.Request(url, headers=cabeceras)
-                with urllib.request.urlopen(
-                        peticion, timeout=TIMEOUT_DESCARGA_SEGUNDOS) as respuesta:
-                    lote = json.loads(respuesta.read())
-                break
-            except (OSError, http.client.HTTPException, ValueError) as error:
-                print(f"    Intento {intento} de {INTENTOS_DESCARGA} fallido: {error}")
-                if intento == INTENTOS_DESCARGA:
-                    raise RuntimeError(f"no se pudo consultar {dataset}") from error
-                time.sleep(2 ** intento)
-        filas += lote
-        if len(lote) < FILAS_POR_CONSULTA:
-            return filas
+    url = URL_CONSULTA.format(dataset=dataset, consulta=urllib.parse.urlencode(consulta))
+    for intento in range(1, INTENTOS_DESCARGA + 1):
+        try:
+            peticion = urllib.request.Request(url, headers=cabeceras)
+            with urllib.request.urlopen(
+                    peticion, timeout=TIMEOUT_CONSULTA_SEGUNDOS) as respuesta:
+                return json.loads(respuesta.read())
+        except (OSError, http.client.HTTPException, ValueError):
+            if intento == INTENTOS_DESCARGA:
+                raise
+            time.sleep(2 ** intento)
 
 
-def obtener_activos(archivo_local, carpeta_fuentes, app_token):
-    """El total de activos reportado por las entidades solidarias desde el
-    anio pasado. Los estados financieros tienen cientos de millones de
-    filas, asi que se pide solo la cuenta ACTIVO."""
+def obtener_activos(archivo_local, carpeta_fuentes, app_token, nits):
+    """El total de activos de cada entidad de `nits` (tal como los escribe la
+    Supersolidaria, 891-500-074-3) en todos sus estados financieros."""
     if archivo_local:
         return obtener_fuente("activos", archivo_local, carpeta_fuentes, app_token)
     dataset = FUENTES["activos"]["dataset"]
     destino = carpeta_fuentes / f"activos_{dataset}.csv"
-    print(f"  Consultando {FUENTES['activos']['titulo']}...", flush=True)
-    desde = datetime.date.today().year - 1
-    try:
-        filas = consultar(dataset, {
+    print(f"  Consultando {FUENTES['activos']['titulo']} de {len(nits)} "
+          "entidades...", flush=True)
+
+    def activos_de(nit):
+        return consultar(dataset, {
             "$select": "a_o, mes, nit, valor_en_pesos",
-            "$where": f"codrenglon = {CUENTA_ACTIVO} AND a_o >= {desde}",
-            "$order": ":id"}, app_token)
-    except RuntimeError as error:
+            "$where": f"nit = '{nit.replace(chr(39), chr(39) * 2)}' "
+                      f"AND codrenglon = {CUENTA_ACTIVO}",
+            "$limit": 1000}, app_token)
+
+    filas, fallidas = [], 0
+    with concurrent.futures.ThreadPoolExecutor(CONSULTAS_SIMULTANEAS) as grupo:
+        for hechas, futuro in enumerate(concurrent.futures.as_completed(
+                [grupo.submit(activos_de, nit) for nit in nits]), start=1):
+            try:
+                filas += futuro.result()
+            except (OSError, http.client.HTTPException, ValueError):
+                fallidas += 1
+            if hechas % 100 == 0:
+                print(f"    {hechas} de {len(nits)} entidades consultadas...", flush=True)
+    if fallidas:
+        print(f"  AVISO: no se pudieron consultar los activos de {fallidas} entidades.")
+
+    if nits and fallidas == len(nits):
         if not destino.exists():
-            raise
+            raise RuntimeError(f"no se pudo consultar {dataset}")
         fecha = datetime.datetime.fromtimestamp(destino.stat().st_mtime)
-        print(f"  AVISO: {error}. Se usa la copia descargada el "
-              f"{fecha:%Y-%m-%d %H:%M}.")
+        print(f"  AVISO: no se pudo consultar {dataset}. Se usa la copia "
+              f"descargada el {fecha:%Y-%m-%d %H:%M}.")
         return destino, f"Copia descargada el {fecha:%Y-%m-%d %H:%M}"
     with open(destino, "w", encoding="utf-8", newline="") as archivo:
         escritor = csv.writer(archivo)
         escritor.writerow(["AÑO", "MES", "NIT", "VALOR EN PESOS"])
         escritor.writerows([f.get("a_o", ""), f.get("mes", ""), f.get("nit", ""),
                             f.get("valor_en_pesos", "")] for f in filas)
-    return destino, (f"Consulta a datos.gov.co, cuenta {CUENTA_ACTIVO} "
-                     f"desde {desde}")
+    return destino, (f"Consulta a datos.gov.co, cuenta {CUENTA_ACTIVO}, "
+                     f"{len(nits) - fallidas} entidades")
 
 
 def obtener_fuente(nombre, archivo_local, carpeta_fuentes, app_token):
@@ -1181,8 +1191,15 @@ def main(argv=None):
         print(f"  AVISO: sin capacidad instalada ({error}); las IPS se ordenan "
               "por número de sedes.")
     try:
+        # Solo las cooperativas que reportan actualmente tienen estados
+        # financieros recientes; las demas se ordenan por nivel de supervision.
+        col_nit_sol = columna_nit(cols_sol)
+        nits = sorted({e[col_nit_sol] for e in entidades
+                       if col_nit_sol and e[col_nit_sol]
+                       and e["bd_es_cooperativa"] == "SI"
+                       and e.get("bd_reporta_actualmente", "SI") == "SI"})
         ruta, origen = obtener_activos(args.archivo_activos, carpeta_fuentes,
-                                       args.app_token)
+                                       args.app_token, nits)
         cols, filas = leer_tabla(ruta)
         activos = activos_por_nit(cols, filas)
         corte = max((fecha for fecha, _ in activos.values()), default=None)

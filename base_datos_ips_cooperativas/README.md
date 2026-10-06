@@ -121,9 +121,12 @@ las columnas originales del registro oficial:
   no aparecen en él (casi siempre, las inscritas después) quedan al final,
   ordenadas por número de sedes.
 - **Cooperativas**: de mayor a menor **total de activos** en su último
-  reporte de estados financieros a la Supersolidaria. Las que no han
-  reportado desde el año pasado quedan al final, por nivel de supervisión
-  (la Supersolidaria pone en el nivel 1 a las más grandes).
+  reporte de estados financieros a la Supersolidaria. Las que ya no le
+  reportan (o cuyos activos no se pudieron consultar) quedan al final, por
+  nivel de supervisión (la Supersolidaria pone en el nivel 1 a las más
+  grandes). Los estados financieros tienen más de 300 millones de filas y
+  datos.gov.co solo responde a tiempo si se consultan entidad por entidad,
+  así que esta parte toma unos minutos.
 - Si alguno de esos dos registros no se puede descargar, la base se arma
   igual, y las IPS se ordenan por número de sedes y las cooperativas por
   nivel de supervisión.

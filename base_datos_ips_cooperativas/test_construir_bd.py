@@ -9,6 +9,7 @@ import io
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import construir_bd as bd
@@ -446,6 +447,36 @@ class PruebaCompleta(unittest.TestCase):
             "WHERE bd_ranking_tamano <= 2").fetchall(),
             [("DAVITA S.A.S.", 3), ("CLINICA SAN JUAN SAS", 2)])
         self.assertEqual(con.execute("SELECT COUNT(*) FROM fuentes").fetchone(), (2,))
+
+    def test_obtener_activos_por_nit(self):
+        # Se consulta NIT por NIT; si uno falla, se siguen los demas.
+        respuestas = {
+            "890-900-111-1": [{"a_o": "2026", "mes": "JUNIO", "nit": "890-900-111-1",
+                               "valor_en_pesos": "$    5,000,000.00"}],
+            "800-100-500-5": [],
+        }
+
+        def consultar(dataset, consulta, app_token=None):
+            nit = consulta["$where"].split("'")[1]
+            if nit not in respuestas:
+                raise OSError("503")
+            return respuestas[nit]
+
+        carpeta = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        with mock.patch.object(bd, "consultar", consultar), \
+                contextlib.redirect_stdout(io.StringIO()):
+            ruta, origen = bd.obtener_activos(
+                None, carpeta, None, ["890-900-111-1", "800-100-500-5", "800-100-600-6"])
+        cols, filas = bd.leer_tabla(ruta)
+        self.assertEqual(bd.activos_por_nit(cols, filas),
+                         {"890900111": ((2026, 6), 5000000.0)})
+        self.assertIn("2 entidades", origen)
+
+        # Si fallan todas y no hay copia anterior, no hay activos.
+        with mock.patch.object(bd, "consultar", consultar), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaises(RuntimeError):
+            bd.obtener_activos(None, carpeta / "vacia", None, ["800-100-600-6"])
 
     def test_incluir_bogota(self):
         _, con = self.construir("--incluir-bogota", "--archivo-capacidad", "no_existe.csv",
