@@ -1,0 +1,5 @@
+﻿fuente;dataset;origen;corte_de_los_datos;registros_nacionales;registros_en_departamentos;fecha_construccion
+Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) - Ministerio de Salud;c36g-9fc2;Archivo local: reps_c36g-9fc2.csv;2026-03-12;76821;18135;2026-10-06 19:46
+Listado de Entidades del Sector Solidario - Superintendencia de la Economía Solidaria;kg2d-yfyg;Archivo local: solidarias_kg2d-yfyg.csv;2026-07-31;126446;1819;2026-10-06 19:46
+Relación de IPS públicas y privadas según el nivel de atención y capacidad instalada (REPS) - Ministerio de Salud;s2ru-bqt6;Archivo local: capacidad_s2ru-bqt6.csv;2022-11-05;41427;1281;2026-10-06 19:46
+Estados financieros de entidades solidarias desde 2017 - Superintendencia de la Economía Solidaria (cuenta ACTIVO);tic6-rbue;Consulta a datos.gov.co, cuenta 100000, 547 entidades;2026-07;15538;544;2026-10-06 19:46
