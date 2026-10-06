@@ -60,6 +60,19 @@ Todo queda en la carpeta `salida/`:
   - **IPS cooperativas**: las IPS que además son cooperativas.
   - **Fuentes**: de dónde salió cada dato y la fecha en que se construyó la
     base.
+- `Correos_IPS.xlsx`: los correos de las IPS para envíos masivos, un
+  registro por correo, sin repetidos:
+  - **Correos**: todos los correos de las IPS, con la IPS, NIT,
+    departamentos, municipios, si es cooperativa y si es el correo
+    principal de la IPS o el de una de sus sedes.
+  - **Correos IPS cooperativas**: solo los de las IPS que son cooperativas.
+  - **Por revisar**: campos de correo del REPS que no traen un correo
+    válido (una página web, un correo sin dominio...).
+
+  El REPS a veces trae varios correos en un mismo campo; se separan. Se
+  quitan las tildes y se corrigen errores evidentes de dominio
+  (`gmail.con` → `gmail.com`); la columna **Observación** dice qué se
+  cambió.
 - `ips_cooperativas.sqlite`: las mismas tablas en una base de datos SQLite
   (se abre con [DB Browser for SQLite](https://sqlitebrowser.org/), Power BI,
   Access, etc.), más dos tablas completas:

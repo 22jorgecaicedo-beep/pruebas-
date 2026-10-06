@@ -67,6 +67,7 @@ URL_DESCARGA = ("https://www.datos.gov.co/api/views/{dataset}/rows.csv"
 CARPETA_SALIDA = Path(__file__).resolve().parent / "salida"
 NOMBRE_SQLITE = "ips_cooperativas.sqlite"
 NOMBRE_EXCEL = "IPS_y_Cooperativas.xlsx"
+NOMBRE_CORREOS = "Correos_IPS.xlsx"
 
 INTENTOS_DESCARGA = 4
 TIMEOUT_DESCARGA_SEGUNDOS = 300
@@ -94,6 +95,26 @@ MESES_REPORTE_ACTIVO = 12
 PATRON_IPS = re.compile(r"\bIPS\b|\bINSTITUCION(ES)? PRESTADORA")
 
 MAX_FILAS_EXCEL = 1_048_575
+
+# Correos dentro de un campo del REPS, que puede traer varios separados por
+# espacios, comas, barras o guiones ("a@x.com - b@y.com", "a@x.com-b@y.com").
+PATRON_CORREO = re.compile(
+    r"[a-z0-9._%+\-]+@(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]+(?![a-z0-9])")
+CORREO_VALIDO = re.compile(
+    r"^[a-z0-9_%+\-]+(\.[a-z0-9_%+\-]+)*"
+    r"@(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$")
+
+# Errores de digitacion evidentes en dominios de correo gratuito.
+DOMINIOS_CORREGIDOS = {
+    "gmail.con": "gmail.com", "gmail.c": "gmail.com", "gmail.cm": "gmail.com",
+    "gmail.om": "gmail.com", "gmail.co": "gmail.com", "gmail.com.co": "gmail.com",
+    "gmial.com": "gmail.com", "gamil.com": "gmail.com", "gmai.com": "gmail.com",
+    "hotmail.con": "hotmail.com", "hotmail.c": "hotmail.com",
+    "hotmail.cm": "hotmail.com", "hotmail.co": "hotmail.com",
+    "hotmailo.com": "hotmail.com", "hotmal.com": "hotmail.com",
+    "hotmial.com": "hotmail.com", "hormail.com": "hotmail.com",
+    "yahoo.con": "yahoo.com", "outlook.con": "outlook.com",
+}
 
 
 # ------------------------------- Texto -------------------------------------
@@ -634,6 +655,89 @@ def agrupar_ips(encabezados, sedes):
     return ips
 
 
+def extraer_correos(valor):
+    """Correos validos de un campo de correo del REPS, como (correo,
+    observacion). Separa los que vienen juntos, quita tildes y corrige
+    errores evidentes de dominio, dejando anotado lo que cambio."""
+    original = re.sub(r"\s*@\s*", "@", str(valor or "").strip().lower())
+    texto = sin_tildes(original)
+    correos = []
+    for candidato in PATRON_CORREO.findall(texto):
+        usuario, dominio = candidato.rsplit("@", 1)
+        usuario = usuario.strip(".-")
+        notas = []
+        if candidato not in original:
+            notas.append("se le quitó una tilde")
+        if dominio in DOMINIOS_CORREGIDOS:
+            notas.append(f"dominio corregido, decía {dominio}")
+            dominio = DOMINIOS_CORREGIDOS[dominio]
+        correo = f"{usuario}@{dominio}"
+        if CORREO_VALIDO.match(correo) and correo not in (c for c, _ in correos):
+            correos.append((correo, "; ".join(notas)))
+    return correos
+
+
+def lista_de_correos(encabezados, sedes_ips):
+    """Un registro por correo, sin repetidos, para envios masivos, y los
+    campos de correo que no se pudieron leer."""
+    cols_correo = columnas(encabezados, ("email", "correo"))
+    col_nit = columna_nit(encabezados)
+    col_nombre = columna_nombre(encabezados)
+    identificador = identificador_ips(encabezados)
+    cooperativas = {identificador(s) for s in sedes_ips
+                    if s["bd_es_cooperativa"] == "SI"}
+
+    correos, ilegibles, ips_con_correo = {}, [], set()
+    for sede in sedes_ips:
+        ips = identificador(sede)
+        nombre = sede.get(col_nombre, "") if col_nombre else ""
+        nit = sede.get(col_nit, "") if col_nit else ""
+        for col in cols_correo:
+            valor = sede.get(col, "").strip()
+            encontrados = extraer_correos(valor)
+            if valor and not encontrados:
+                ilegibles.append((ips, nombre, nit, sede, col, valor))
+            for correo, nota in encontrados:
+                ips_con_correo.add(ips)
+                datos = correos.setdefault(correo, {
+                    "ips": {}, "departamentos": set(), "municipios": set(),
+                    "principal": False, "notas": set()})
+                datos["ips"].setdefault(ips, (nombre, nit))
+                datos["departamentos"].add(sede["bd_departamento"])
+                datos["municipios"].add(sede["bd_municipio"])
+                datos["principal"] |= "sede" not in clave(col)
+                if nota:
+                    datos["notas"].add(nota)
+
+    filas = []
+    for correo, datos in correos.items():
+        filas.append({
+            "Correo": correo,
+            "IPS": " / ".join(nombre for nombre, _ in datos["ips"].values()),
+            "NIT": " / ".join(nit for _, nit in datos["ips"].values()),
+            "Es cooperativa": "SI" if cooperativas & datos["ips"].keys() else "NO",
+            "Departamentos": ", ".join(sorted(datos["departamentos"], key=normalizar)),
+            "Municipios": ", ".join(sorted(datos["municipios"])),
+            "Tipo de correo": ("Principal de la IPS" if datos["principal"]
+                               else "De una sede"),
+            "Observación": "; ".join(sorted(datos["notas"])),
+        })
+    filas.sort(key=lambda f: (normalizar(f["Departamentos"]), normalizar(f["IPS"]),
+                              f["Tipo de correo"] != "Principal de la IPS",
+                              f["Correo"]))
+
+    revisar = []
+    for ips, nombre, nit, sede, col, valor in ilegibles:
+        revisar.append({
+            "IPS": nombre, "NIT": nit,
+            "Departamento": sede["bd_departamento"],
+            "Municipio": sede["bd_municipio"],
+            "Campo": col, "Valor en el REPS": valor,
+            "La IPS tiene otro correo válido": "SI" if ips in ips_con_correo else "NO",
+        })
+    return filas, revisar
+
+
 def ordenar(filas, encabezados):
     """Por departamento, municipio y razon social."""
     col_nombre = columna_nombre(encabezados)
@@ -892,6 +996,17 @@ def main(argv=None):
         ("Fuentes", cols_fuentes, fuentes),
     ])
     guardar_csv(salida / "csv", tablas)
+    correos, revisar = lista_de_correos(cols_reps, sedes_ips)
+    cols_correos = ["Correo", "IPS", "NIT", "Es cooperativa", "Departamentos",
+                    "Municipios", "Tipo de correo", "Observación"]
+    ruta_correos = guardar_excel(salida / NOMBRE_CORREOS, [
+        ("Correos", cols_correos, correos),
+        ("Correos IPS cooperativas", cols_correos,
+         [c for c in correos if c["Es cooperativa"] == "SI"]),
+        ("Por revisar", ["IPS", "NIT", "Departamento", "Municipio", "Campo",
+                         "Valor en el REPS", "La IPS tiene otro correo válido"],
+         revisar),
+    ])
 
     print()
     print(f"{'Departamento':<22}{'IPS':>8}{'Sedes IPS':>11}"
@@ -903,6 +1018,7 @@ def main(argv=None):
     print(f"\nListo. Resultado en {salida.resolve()}:")
     print(f"  - {ruta_sqlite.name}")
     print(f"  - {ruta_excel.name}")
+    print(f"  - {ruta_correos.name} ({len(correos)} correos)")
     print("  - csv/")
     return 0
 

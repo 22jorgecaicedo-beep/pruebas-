@@ -159,6 +159,28 @@ class PruebasTexto(unittest.TestCase):
         self.assertEqual(bd.reparar_texto("NARIÃ‘O"), "NARIÑO")
         self.assertEqual(bd.reparar_texto("BOGOTÁ, D.C."), "BOGOTÁ, D.C.")
 
+    def test_extraer_correos(self):
+        casos = {
+            "calidad@davita.com   legaldavita@davita.com":
+                [("calidad@davita.com", ""), ("legaldavita@davita.com", "")],
+            "a@viva1a.com.co - b@viva1a.com.co -":
+                [("a@viva1a.com.co", ""), ("b@viva1a.com.co", "")],
+            "ceginob@hotmail.com-ceginob@gmail.com":
+                [("ceginob@hotmail.com", ""), ("ceginob@gmail.com", "")],
+            "gerencia.usos@ gmail.com": [("gerencia.usos@gmail.com", "")],
+            "direccióncalidad@colcan.com":
+                [("direccioncalidad@colcan.com", "se le quitó una tilde")],
+            "Y@GMAIL.CON": [("y@gmail.com", "dominio corregido, decía gmail.con")],
+            "x@gmail.c": [("x@gmail.com", "dominio corregido, decía gmail.c")],
+            "a@x.com. b@y.com.co.": [("a@x.com", ""), ("b@y.com.co", "")],
+            "a@x.com, a@x.com": [("a@x.com", "")],
+            "gerencia@cediul": [],
+            "www.hospital.gov.co": [],
+            "gerencia@hospital de calamar.gov.co": [],
+        }
+        for valor, esperado in casos.items():
+            self.assertEqual(bd.extraer_correos(valor), esperado, valor)
+
     def test_nombre_columna(self):
         self.assertEqual(bd.nombre_columna("NombrePrestador"), "nombre_prestador")
         self.assertEqual(bd.nombre_columna("RAZÓN SOCIAL"), "razon_social")
@@ -270,6 +292,9 @@ class PruebaCompleta(unittest.TestCase):
         self.assertTrue(hoja.auto_filter.ref)
         self.assertEqual(hoja["A1"].value, "bd_departamento")
         self.assertTrue((salida / "csv" / "ips.csv").exists())
+        correos = load_workbook(salida / bd.NOMBRE_CORREOS)
+        self.assertEqual(correos.sheetnames,
+                         ["Correos", "Correos IPS cooperativas", "Por revisar"])
 
     def test_sede_principal_por_codigo(self):
         # El REPS real no marca la sede principal: es la del codigo + "01".
@@ -284,6 +309,44 @@ class PruebaCompleta(unittest.TestCase):
         ips = bd.agrupar_ips(encabezados, sedes)
         self.assertEqual([(i["nombre_sede"], i["bd_num_sedes"]) for i in ips],
                          [("SEDE DONMATIAS", 3)])
+
+    def test_lista_de_correos(self):
+        encabezados = ["numero_identificacion", "nombre_prestador",
+                       "email_prestador", "email_sede"]
+
+        def sede(nit, nombre, depto, muni, principal, de_sede, coop="NO"):
+            return {"numero_identificacion": nit, "nombre_prestador": nombre,
+                    "email_prestador": principal, "email_sede": de_sede,
+                    "bd_departamento": depto, "bd_municipio": muni,
+                    "bd_es_cooperativa": coop}
+
+        sedes = [
+            # Misma IPS en dos departamentos: su correo principal sale una vez.
+            sede("900532504", "DAVITA S.A.S.", "ATLÁNTICO", "BARRANQUILLA",
+                 "calidad@davita.com", "baq@davita.com"),
+            sede("900532504", "DAVITA S.A.S.", "BOLÍVAR", "CARTAGENA",
+                 "calidad@davita.com", "ctg@davita.com"),
+            sede("802007499", "COOPERATIVA CONSALUD", "ATLÁNTICO", "SOLEDAD",
+                 "consalud@gmail.con", "consalud@gmail.com", coop="SI"),
+            sede("900111222", "IPS SIN CORREO", "BOLÍVAR", "MAGANGUE",
+                 "www.ips.com", "gerencia@ips"),
+        ]
+        correos, revisar = bd.lista_de_correos(encabezados, sedes)
+        por_correo = {c["Correo"]: c for c in correos}
+        self.assertEqual(sorted(por_correo), [
+            "baq@davita.com", "calidad@davita.com", "consalud@gmail.com",
+            "ctg@davita.com"])
+        davita = por_correo["calidad@davita.com"]
+        self.assertEqual((davita["IPS"], davita["Departamentos"], davita["Tipo de correo"]),
+                         ("DAVITA S.A.S.", "ATLÁNTICO, BOLÍVAR", "Principal de la IPS"))
+        self.assertEqual(por_correo["baq@davita.com"]["Tipo de correo"], "De una sede")
+        consalud = por_correo["consalud@gmail.com"]
+        self.assertEqual((consalud["Es cooperativa"], consalud["Observación"]),
+                         ("SI", "dominio corregido, decía gmail.con"))
+        self.assertEqual([(r["IPS"], r["Valor en el REPS"], r["La IPS tiene otro correo válido"])
+                          for r in revisar],
+                         [("IPS SIN CORREO", "www.ips.com", "NO"),
+                          ("IPS SIN CORREO", "gerencia@ips", "NO")])
 
     def test_incluir_bogota(self):
         _, con = self.construir("--incluir-bogota")

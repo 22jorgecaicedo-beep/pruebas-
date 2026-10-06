@@ -37,6 +37,7 @@ jobs:
           rm -rf "$destino"
           mkdir -p "$destino"
           cp -r base_datos_ips_cooperativas/salida/IPS_y_Cooperativas.xlsx \
+                base_datos_ips_cooperativas/salida/Correos_IPS.xlsx \
                 base_datos_ips_cooperativas/salida/ips_cooperativas.sqlite \
                 base_datos_ips_cooperativas/salida/csv "$destino"/
           git config user.name "github-actions[bot]"
