@@ -18,6 +18,8 @@ que la base siempre queda al día.
 |---|---|---|
 | Registro Especial de Prestadores y Sedes de Servicios de Salud (REPS) | Ministerio de Salud | [`c36g-9fc2`](https://www.datos.gov.co/d/c36g-9fc2) |
 | Listado de Entidades del Sector Solidario | Supersolidaria | [`kg2d-yfyg`](https://www.datos.gov.co/d/kg2d-yfyg) |
+| Relación de IPS públicas y privadas según el nivel de atención y capacidad instalada (para ordenar las IPS por tamaño) | Ministerio de Salud | [`s2ru-bqt6`](https://www.datos.gov.co/d/s2ru-bqt6) |
+| Estados financieros de entidades solidarias, cuenta ACTIVO (para ordenar las cooperativas por tamaño) | Supersolidaria | [`tic6-rbue`](https://www.datos.gov.co/d/tic6-rbue) |
 
 ## La base de datos ya construida
 
@@ -51,18 +53,21 @@ Todo queda en la carpeta `salida/`:
 
 - `IPS_y_Cooperativas.xlsx`: libro de Excel con las hojas:
   - **Resumen**: cuántas IPS, sedes y cooperativas hay en cada departamento.
-  - **IPS**: una fila por IPS (por NIT), sin repetidas, con los datos de su
-    sede principal, el total de sedes y los departamentos donde tiene sedes.
+  - **IPS**: una fila por IPS (por NIT), sin repetidas, de la más grande a
+    la más pequeña, con los datos de su sede principal, su capacidad
+    instalada, el total de sedes y los departamentos donde tiene sedes.
   - **Sedes IPS**: todas las sedes de las IPS, con dirección y teléfono de
-    cada una.
-  - **Cooperativas**: todas las cooperativas y precooperativas, con la
-    fecha de su último reporte a la Supersolidaria.
+    cada una, en el orden de su IPS por tamaño.
+  - **Cooperativas**: todas las cooperativas y precooperativas, de la más
+    grande a la más pequeña, con sus activos y la fecha de su último
+    reporte a la Supersolidaria.
   - **IPS cooperativas**: las IPS que además son cooperativas.
   - **Fuentes**: de dónde salió cada dato y la fecha en que se construyó la
     base.
 - `Correos_IPS.xlsx`: los correos de las IPS para envíos masivos, un
   registro por correo, sin repetidos:
-  - **Correos**: todos los correos de las IPS, con la IPS, NIT,
+  - **Correos**: todos los correos de las IPS, empezando por los de las IPS
+    más grandes, con el ranking de tamaño de la IPS, su nombre, NIT,
     departamentos, municipios, si es cooperativa y si es el correo
     principal de la IPS o el de una de sus sedes.
   - **Correos IPS cooperativas**: solo los de las IPS que son cooperativas.
@@ -89,16 +94,39 @@ las columnas originales del registro oficial:
 
 | Columna | Significado |
 |---|---|
+| `bd_ranking_tamano` | Posición por tamaño: 1 es la IPS (o la cooperativa) más grande. Ver "Orden por tamaño". |
 | `bd_departamento` | Departamento donde está la sede o la entidad (en la hoja IPS, el de su sede principal). |
 | `bd_municipio` | Municipio donde está la sede o la entidad (en la hoja IPS, el de su sede principal). |
 | `bd_departamentos` | Todos los departamentos donde la IPS tiene sedes. |
 | `bd_es_ips` | `SI` si la clase de prestador es IPS. |
 | `bd_num_sedes` | Número de sedes de la IPS en los cinco departamentos. |
 | `bd_inscripciones_reps` | Cuántas inscripciones (códigos de prestador) tiene la IPS en el REPS; ver "Una fila por IPS". |
+| `bd_capacidad_instalada` | Total de camas, camillas, consultorios, salas, ambulancias, sillas y unidades móviles de la IPS en los cinco departamentos. Vacío si el registro de capacidad no tiene datos de la IPS. |
+| `bd_camas`, `bd_consultorios`, `bd_salas`, `bd_ambulancias` | El detalle de esa capacidad. |
+| `bd_nivel_atencion` | Nivel de atención (1, 2 o 3; el 3 es el de mayor complejidad). Solo lo reportan los hospitales públicos. |
+| `bd_activos_pesos` | Total de activos de la cooperativa en su último reporte de estados financieros a la Supersolidaria. |
+| `bd_fecha_activos` | Año y mes de ese reporte. |
 | `bd_es_cooperativa` | `SI` si la entidad es una cooperativa. |
 | `bd_reporta_actualmente` | `SI` si la cooperativa le reportó a la Supersolidaria en los últimos 12 meses del listado; `NO` suele indicar que está inactiva o en liquidación. |
 | `bd_ultimo_reporte` | Fecha del último reporte de la entidad a la Supersolidaria. |
 | `bd_criterio_cooperativa` | Por qué se marcó la IPS como cooperativa: su NIT está registrado como cooperativa en la Supersolidaria, o su razón social es de cooperativa. |
+
+## Orden por tamaño
+
+- **IPS**: de mayor a menor **capacidad instalada** en los cinco
+  departamentos (camas, camillas, consultorios, salas, ambulancias, sillas
+  y unidades móviles, cada una cuenta como una). A igual capacidad, primero
+  la de más camas y luego la de más sedes. El registro de capacidad
+  instalada que publica el Ministerio es de noviembre de 2022: las IPS que
+  no aparecen en él (casi siempre, las inscritas después) quedan al final,
+  ordenadas por número de sedes.
+- **Cooperativas**: de mayor a menor **total de activos** en su último
+  reporte de estados financieros a la Supersolidaria. Las que no han
+  reportado desde el año pasado quedan al final, por nivel de supervisión
+  (la Supersolidaria pone en el nivel 1 a las más grandes).
+- Si alguno de esos dos registros no se puede descargar, la base se arma
+  igual, y las IPS se ordenan por número de sedes y las cooperativas por
+  nivel de supervisión.
 
 ## Criterios
 

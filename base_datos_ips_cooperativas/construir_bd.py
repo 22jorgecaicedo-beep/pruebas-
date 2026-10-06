@@ -25,12 +25,14 @@ import csv
 import datetime
 import http.client
 import io
+import json
 import re
 import sqlite3
 import sys
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -60,9 +62,24 @@ FUENTES = {
                   "Superintendencia de la Economía Solidaria",
         "dataset": "kg2d-yfyg",
     },
+    # Para ordenar por tamano.
+    "capacidad": {
+        "titulo": "Relación de IPS públicas y privadas según el nivel de "
+                  "atención y capacidad instalada (REPS) - Ministerio de Salud",
+        "dataset": "s2ru-bqt6",
+    },
+    "activos": {
+        "titulo": "Estados financieros de entidades solidarias desde 2017 - "
+                  "Superintendencia de la Economía Solidaria (cuenta ACTIVO)",
+        "dataset": "tic6-rbue",
+    },
 }
 URL_DESCARGA = ("https://www.datos.gov.co/api/views/{dataset}/rows.csv"
                 "?accessType=DOWNLOAD")
+URL_CONSULTA = "https://www.datos.gov.co/resource/{dataset}.json?{consulta}"
+# Cuenta del total de activos en los estados financieros de la Supersolidaria.
+CUENTA_ACTIVO = "100000"
+FILAS_POR_CONSULTA = 50000
 
 CARPETA_SALIDA = Path(__file__).resolve().parent / "salida"
 NOMBRE_SQLITE = "ips_cooperativas.sqlite"
@@ -200,7 +217,7 @@ def clave_fecha(valor):
     m = re.fullmatch(r"(\d{4})(\d{2})?(\d{2})?", texto)
     if m:
         return int(m[1]), int(m[2] or 0), int(m[3] or 0)
-    m = re.search(r"\b([A-Za-z]{3})[a-z]*\.? (\d{1,2}),? (\d{4})", texto)
+    m = re.search(r"\b([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})", texto)
     if m and normalizar(m[1]) in MESES:
         return int(m[3]), MESES[normalizar(m[1])], int(m[2])
     return 0, 0, 0
@@ -209,6 +226,23 @@ def clave_fecha(valor):
 MESES = {"JAN": 1, "ENE": 1, "FEB": 2, "MAR": 3, "APR": 4, "ABR": 4,
          "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8, "AGO": 8, "SEP": 9,
          "OCT": 10, "NOV": 11, "DEC": 12, "DIC": 12}
+
+
+def a_numero(valor):
+    """'$    81,781,823,706.19', '1.000.000', '0,00' o '$    - 0' -> float."""
+    texto = re.sub(r"[^\d,.]", "", str(valor or ""))
+    if not texto:
+        return 0.0
+    if "," in texto and "." in texto:
+        decimal = "." if texto.rfind(".") > texto.rfind(",") else ","
+    elif re.search(r"[,.]\d{1,2}$", texto):
+        decimal = texto[-3] if texto[-3] in ",." else texto[-2]
+    else:
+        decimal = None
+    if decimal:
+        entero, _, fraccion = texto.rpartition(decimal)
+        return float(re.sub(r"[,.]", "", entero) + "." + fraccion)
+    return float(re.sub(r"[,.]", "", texto))
 
 
 def fecha_iso(clave_de_fecha):
@@ -456,6 +490,64 @@ def descargar(dataset, destino, app_token=None):
     raise RuntimeError(f"no se pudo descargar {url}")
 
 
+def consultar(dataset, consulta, app_token=None):
+    """Filas de una consulta SoQL a datos.gov.co, pagina por pagina."""
+    cabeceras = {"User-Agent": "base-datos-ips-cooperativas/1.0"}
+    if app_token:
+        cabeceras["X-App-Token"] = app_token
+    filas = []
+    while True:
+        pagina = {**consulta, "$limit": FILAS_POR_CONSULTA, "$offset": len(filas)}
+        url = URL_CONSULTA.format(dataset=dataset,
+                                  consulta=urllib.parse.urlencode(pagina))
+        for intento in range(1, INTENTOS_DESCARGA + 1):
+            try:
+                peticion = urllib.request.Request(url, headers=cabeceras)
+                with urllib.request.urlopen(
+                        peticion, timeout=TIMEOUT_DESCARGA_SEGUNDOS) as respuesta:
+                    lote = json.loads(respuesta.read())
+                break
+            except (OSError, http.client.HTTPException, ValueError) as error:
+                print(f"    Intento {intento} de {INTENTOS_DESCARGA} fallido: {error}")
+                if intento == INTENTOS_DESCARGA:
+                    raise RuntimeError(f"no se pudo consultar {dataset}") from error
+                time.sleep(2 ** intento)
+        filas += lote
+        if len(lote) < FILAS_POR_CONSULTA:
+            return filas
+
+
+def obtener_activos(archivo_local, carpeta_fuentes, app_token):
+    """El total de activos reportado por las entidades solidarias desde el
+    anio pasado. Los estados financieros tienen cientos de millones de
+    filas, asi que se pide solo la cuenta ACTIVO."""
+    if archivo_local:
+        return obtener_fuente("activos", archivo_local, carpeta_fuentes, app_token)
+    dataset = FUENTES["activos"]["dataset"]
+    destino = carpeta_fuentes / f"activos_{dataset}.csv"
+    print(f"  Consultando {FUENTES['activos']['titulo']}...", flush=True)
+    desde = datetime.date.today().year - 1
+    try:
+        filas = consultar(dataset, {
+            "$select": "a_o, mes, nit, valor_en_pesos",
+            "$where": f"codrenglon = {CUENTA_ACTIVO} AND a_o >= {desde}",
+            "$order": ":id"}, app_token)
+    except RuntimeError as error:
+        if not destino.exists():
+            raise
+        fecha = datetime.datetime.fromtimestamp(destino.stat().st_mtime)
+        print(f"  AVISO: {error}. Se usa la copia descargada el "
+              f"{fecha:%Y-%m-%d %H:%M}.")
+        return destino, f"Copia descargada el {fecha:%Y-%m-%d %H:%M}"
+    with open(destino, "w", encoding="utf-8", newline="") as archivo:
+        escritor = csv.writer(archivo)
+        escritor.writerow(["AÑO", "MES", "NIT", "VALOR EN PESOS"])
+        escritor.writerows([f.get("a_o", ""), f.get("mes", ""), f.get("nit", ""),
+                            f.get("valor_en_pesos", "")] for f in filas)
+    return destino, (f"Consulta a datos.gov.co, cuenta {CUENTA_ACTIVO} "
+                     f"desde {desde}")
+
+
 def obtener_fuente(nombre, archivo_local, carpeta_fuentes, app_token):
     """Devuelve (ruta del archivo, de donde salio)."""
     if archivo_local:
@@ -677,9 +769,11 @@ def extraer_correos(valor):
     return correos
 
 
-def lista_de_correos(encabezados, sedes_ips):
+def lista_de_correos(encabezados, sedes_ips, ranking=None):
     """Un registro por correo, sin repetidos, para envios masivos, y los
-    campos de correo que no se pudieron leer."""
+    campos de correo que no se pudieron leer. `ranking` da la posicion de
+    cada IPS por tamano; los correos de las IPS mas grandes van primero."""
+    ranking = ranking or {}
     cols_correo = columnas(encabezados, ("email", "correo"))
     col_nit = columna_nit(encabezados)
     col_nombre = columna_nombre(encabezados)
@@ -711,7 +805,9 @@ def lista_de_correos(encabezados, sedes_ips):
 
     filas = []
     for correo, datos in correos.items():
+        posiciones = [ranking[i] for i in datos["ips"] if i in ranking]
         filas.append({
+            "Ranking tamaño": min(posiciones) if posiciones else "",
             "Correo": correo,
             "IPS": " / ".join(nombre for nombre, _ in datos["ips"].values()),
             "NIT": " / ".join(nit for _, nit in datos["ips"].values()),
@@ -722,7 +818,8 @@ def lista_de_correos(encabezados, sedes_ips):
                                else "De una sede"),
             "Observación": "; ".join(sorted(datos["notas"])),
         })
-    filas.sort(key=lambda f: (normalizar(f["Departamentos"]), normalizar(f["IPS"]),
+    filas.sort(key=lambda f: (f["Ranking tamaño"] if f["Ranking tamaño"] != "" else 10**9,
+                              normalizar(f["Departamentos"]), normalizar(f["IPS"]),
                               f["Tipo de correo"] != "Principal de la IPS",
                               f["Correo"]))
 
@@ -736,6 +833,126 @@ def lista_de_correos(encabezados, sedes_ips):
             "La IPS tiene otro correo válido": "SI" if ips in ips_con_correo else "NO",
         })
     return filas, revisar
+
+
+GRUPOS_CAPACIDAD = {"CAMAS": "bd_camas", "CONSULTORIOS": "bd_consultorios",
+                    "SALAS": "bd_salas", "AMBULANCIAS": "bd_ambulancias"}
+COLUMNAS_TAMANO_IPS = ["bd_ranking_tamano", "bd_capacidad_instalada", "bd_camas",
+                       "bd_consultorios", "bd_salas", "bd_ambulancias",
+                       "bd_nivel_atencion"]
+
+
+def capacidad_por_ips(encabezados, filas, objetivos):
+    """Capacidad instalada de cada IPS (por NIT) en sus sedes de los
+    departamentos: camas, consultorios, salas, ambulancias, el total de todo
+    (con camillas, sillas y unidades moviles) y el nivel de atencion."""
+    col_nit = columna_nit(encabezados)
+    col_sede = buscar_columna(encabezados, ("codigosede",))
+    col_depto = buscar_columna(encabezados, PATRONES_DEPARTAMENTO)
+    col_grupo = buscar_columna(encabezados, ("grupocapacidad", "grupo"))
+    col_cantidad = buscar_columna(encabezados, ("cantidadcapacidad", "cantidad"))
+    col_nivel = buscar_columna(encabezados, ("nivelatencion", "nivel"))
+    if not (col_nit and col_grupo and col_cantidad):
+        raise RuntimeError("el archivo de capacidad instalada no tiene NIT, "
+                           f"grupo o cantidad. Columnas: {', '.join(encabezados)}")
+
+    capacidad = {}
+    for fila in filas:
+        # Los dos primeros digitos del codigo de la sede son su departamento.
+        codigo = fila.get(col_sede, "").strip() if col_sede else ""
+        if codigo.isdigit():
+            departamento = departamento_de(codigo.zfill(10)[:2], objetivos)
+        else:
+            departamento = departamento_de(fila.get(col_depto), objetivos)
+        nit = normalizar_nit(fila[col_nit])
+        if not departamento or not nit:
+            continue
+        datos = capacidad.setdefault(nit, {
+            "bd_capacidad_instalada": 0, **{c: 0 for c in GRUPOS_CAPACIDAD.values()},
+            "bd_nivel_atencion": ""})
+        cantidad = int(a_numero(fila[col_cantidad]))
+        datos["bd_capacidad_instalada"] += cantidad
+        grupo = GRUPOS_CAPACIDAD.get(normalizar(fila[col_grupo]))
+        if grupo:
+            datos[grupo] += cantidad
+        nivel = fila.get(col_nivel, "").strip() if col_nivel else ""
+        if nivel.isdigit() and nivel > datos["bd_nivel_atencion"]:
+            datos["bd_nivel_atencion"] = nivel
+    return capacidad
+
+
+def ordenar_ips_por_tamano(ips, capacidad, identificador, encabezados):
+    """De la IPS con mas capacidad instalada a la de menos (a igual
+    capacidad, mas camas y mas sedes). Las IPS sin datos de capacidad quedan
+    con esas columnas vacias y al final, por numero de sedes."""
+    col_nombre = columna_nombre(encabezados)
+    for fila in ips:
+        datos = capacidad.get(identificador(fila))
+        for columna in COLUMNAS_TAMANO_IPS[1:]:
+            fila[columna] = datos[columna] if datos else ""
+
+    def numero(valor):
+        return valor if isinstance(valor, int) else -1
+
+    ips.sort(key=lambda f: (-numero(f["bd_capacidad_instalada"]), -numero(f["bd_camas"]),
+                            -f["bd_num_sedes"],
+                            normalizar(f.get(col_nombre, "")) if col_nombre else ""))
+    for posicion, fila in enumerate(ips, start=1):
+        fila["bd_ranking_tamano"] = posicion
+    return ips
+
+
+def activos_por_nit(encabezados, filas):
+    """El ultimo total de activos reportado por cada entidad: NIT ->
+    (fecha, valor)."""
+    col_anio = buscar_columna(encabezados, ("ano", "ao", "anio"))
+    col_mes = buscar_columna(encabezados, ("mes",))
+    col_nit = columna_nit(encabezados)
+    col_valor = buscar_columna(encabezados, ("valorenpesos", "valor"))
+    col_cuenta = buscar_columna(encabezados, ("codrenglon", "cuenta"))
+    if not (col_anio and col_nit and col_valor):
+        raise RuntimeError("el archivo de activos no tiene año, NIT o valor. "
+                           f"Columnas: {', '.join(encabezados)}")
+    activos = {}
+    for fila in filas:
+        if col_cuenta and fila.get(col_cuenta, CUENTA_ACTIVO).strip() != CUENTA_ACTIVO:
+            continue
+        nit = normalizar_nit(fila[col_nit])
+        anio = fila[col_anio].strip()
+        if not nit or not anio.isdigit():
+            continue
+        mes = MESES.get(normalizar(fila.get(col_mes, ""))[:3], 0) if col_mes else 0
+        fecha = (int(anio), mes)
+        if nit not in activos or fecha > activos[nit][0]:
+            activos[nit] = (fecha, a_numero(fila[col_valor]))
+    return activos
+
+
+def ordenar_entidades_por_tamano(entidades, encabezados, activos):
+    """Las cooperativas (y aparte las demas entidades solidarias) de mas a
+    menos activos. Las que no tienen reportes recientes de activos quedan al
+    final, por nivel de supervision (el 1 es el de las mas grandes)."""
+    col_nit = columna_nit(encabezados)
+    col_nombre = columna_nombre(encabezados)
+    col_supervision = buscar_columna(encabezados, ("nivelsupervision", "supervision"))
+    for fila in entidades:
+        dato = activos.get(normalizar_nit(fila.get(col_nit, ""))) if col_nit else None
+        fila["bd_activos_pesos"] = round(dato[1]) if dato else ""
+        fila["bd_fecha_activos"] = f"{dato[0][0]:04d}-{dato[0][1]:02d}" if dato else ""
+
+    def clave_orden(fila):
+        nivel = fila.get(col_supervision, "").strip() if col_supervision else ""
+        return (fila["bd_es_cooperativa"] != "SI",
+                -(fila["bd_activos_pesos"] if fila["bd_activos_pesos"] != "" else -1),
+                int(nivel) if nivel.isdigit() else 9,
+                normalizar(fila.get(col_nombre, "")) if col_nombre else "")
+
+    entidades.sort(key=clave_orden)
+    posiciones = {"SI": 0, "NO": 0}
+    for fila in entidades:
+        posiciones[fila["bd_es_cooperativa"]] += 1
+        fila["bd_ranking_tamano"] = posiciones[fila["bd_es_cooperativa"]]
+    return entidades
 
 
 def ordenar(filas, encabezados):
@@ -841,7 +1058,11 @@ def guardar_excel(ruta, hojas):
             valores = []
             for c in cols:
                 valor = fila.get(c, "")
-                if isinstance(valor, str):
+                if isinstance(valor, (int, float)) and abs(valor) >= 1_000_000:
+                    celda = WriteOnlyCell(hoja, value=valor)
+                    celda.number_format = "#,##0"
+                    valor = celda
+                elif isinstance(valor, str):
                     valor = ILLEGAL_CHARACTERS_RE.sub("", valor)
                     if valor.startswith("="):
                         # Que Excel lo muestre como texto y no como formula.
@@ -901,6 +1122,13 @@ def main(argv=None):
                         help="usar un CSV/XLSX del listado de la "
                              "Supersolidaria ya descargado en vez de "
                              "descargarlo")
+    parser.add_argument("--archivo-capacidad",
+                        help="usar un CSV/XLSX de capacidad instalada del REPS "
+                             "ya descargado en vez de descargarlo")
+    parser.add_argument("--archivo-activos",
+                        help="usar un CSV/XLSX con los activos de las "
+                             "entidades solidarias (AÑO, MES, NIT, VALOR EN "
+                             "PESOS) en vez de consultarlos")
     parser.add_argument("--app-token",
                         help="token de aplicación de datos.gov.co (opcional, "
                              "evita límites de descarga)")
@@ -914,7 +1142,7 @@ def main(argv=None):
 
     print("Departamentos: " + ", ".join(objetivos))
     try:
-        print("\n[1/3] Entidades del sector solidario (Supersolidaria)")
+        print("\n[1/4] Entidades del sector solidario (Supersolidaria)")
         ruta_sol, origen_sol = obtener_fuente(
             "solidarias", args.archivo_solidarias, carpeta_fuentes,
             args.app_token)
@@ -923,7 +1151,7 @@ def main(argv=None):
         entidades, nits_cooperativas = procesar_solidarias(
             cols_sol, filas_sol, objetivos)
 
-        print("\n[2/3] Prestadores de servicios de salud (REPS)")
+        print("\n[2/4] Prestadores de servicios de salud (REPS)")
         ruta_reps, origen_reps = obtener_fuente(
             "reps", args.archivo_reps, carpeta_fuentes, args.app_token)
         cols_reps, filas_reps = leer_tabla(ruta_reps)
@@ -937,22 +1165,56 @@ def main(argv=None):
               "--archivo-solidarias.")
         return 1
 
-    print("\n[3/3] Armando la base de datos")
-    ips = agrupar_ips(cols_reps, sedes)
+    # El tamano solo sirve para ordenar: si una fuente falla, se sigue sin ella.
+    print("\n[3/4] Tamaño de las instituciones")
+    fuentes_tamano = []
+    capacidad, activos = {}, {}
+    try:
+        ruta, origen = obtener_fuente("capacidad", args.archivo_capacidad,
+                                      carpeta_fuentes, args.app_token)
+        cols, filas = leer_tabla(ruta)
+        capacidad = capacidad_por_ips(cols, filas, objetivos)
+        fuentes_tamano.append(("capacidad", origen, corte_de_los_datos(cols, filas),
+                               len(filas)))
+        print(f"  Capacidad instalada de {len(capacidad)} IPS.")
+    except RuntimeError as error:
+        print(f"  AVISO: sin capacidad instalada ({error}); las IPS se ordenan "
+              "por número de sedes.")
+    try:
+        ruta, origen = obtener_activos(args.archivo_activos, carpeta_fuentes,
+                                       args.app_token)
+        cols, filas = leer_tabla(ruta)
+        activos = activos_por_nit(cols, filas)
+        corte = max((fecha for fecha, _ in activos.values()), default=None)
+        fuentes_tamano.append(("activos", origen,
+                               f"{corte[0]:04d}-{corte[1]:02d}" if corte else "",
+                               len(filas)))
+        print(f"  Activos de {len(activos)} entidades solidarias.")
+    except RuntimeError as error:
+        print(f"  AVISO: sin activos ({error}); las cooperativas se ordenan "
+              "por nivel de supervisión.")
+
+    print("\n[4/4] Armando la base de datos")
+    identificador = identificador_ips(cols_reps)
+    ips = ordenar_ips_por_tamano(agrupar_ips(cols_reps, sedes), capacidad,
+                                 identificador, cols_reps)
+    ranking = {identificador(f): f["bd_ranking_tamano"] for f in ips}
     calc_reps = ["bd_departamento", "bd_municipio", "bd_es_ips",
                  "bd_es_cooperativa", "bd_criterio_cooperativa"]
     cols_sedes = columnas_de(cols_reps, calc_reps)
-    cols_ips = columnas_de(cols_reps, calc_reps[:2] + [
+    cols_ips = columnas_de(cols_reps, COLUMNAS_TAMANO_IPS[:1] + calc_reps[:2] + [
         "bd_departamentos", "bd_num_sedes", "bd_inscripciones_reps"]
-        + calc_reps[3:])
-    calc_sol = ["bd_departamento", "bd_municipio", "bd_es_cooperativa"]
+        + COLUMNAS_TAMANO_IPS[1:] + calc_reps[3:])
+    calc_sol = ["bd_ranking_tamano", "bd_departamento", "bd_municipio",
+                "bd_es_cooperativa", "bd_activos_pesos", "bd_fecha_activos"]
     if columna_corte(cols_sol):
         calc_sol += ["bd_reporta_actualmente", "bd_ultimo_reporte"]
     cols_entidades = columnas_de(cols_sol, calc_sol)
 
-    ips = ordenar(ips, cols_reps)
+    # Las sedes, en el orden de su IPS por tamano.
     sedes = ordenar(sedes, cols_reps)
-    entidades = ordenar(entidades, cols_sol)
+    sedes.sort(key=lambda s: ranking.get(identificador(s), len(ranking) + 1))
+    entidades = ordenar_entidades_por_tamano(entidades, cols_sol, activos)
     cooperativas = [e for e in entidades if e["bd_es_cooperativa"] == "SI"]
     ips_cooperativas = [i for i in ips if i["bd_es_cooperativa"] == "SI"]
     sedes_ips = [s for s in sedes if s["bd_es_ips"] == "SI"]
@@ -972,6 +1234,15 @@ def main(argv=None):
          "registros_nacionales": len(filas_sol),
          "registros_en_departamentos": len(entidades)},
     ]
+    con_tamano = {
+        "capacidad": sum(1 for f in ips if f["bd_capacidad_instalada"] != ""),
+        "activos": sum(1 for f in entidades if f["bd_activos_pesos"] != "")}
+    for nombre, origen, corte, leidos in fuentes_tamano:
+        fuentes.append({
+            "fuente": FUENTES[nombre]["titulo"], "dataset": FUENTES[nombre]["dataset"],
+            "origen": origen, "corte_de_los_datos": corte,
+            "registros_nacionales": leidos,
+            "registros_en_departamentos": con_tamano[nombre]})
     for fuente in fuentes:
         fuente["fecha_construccion"] = f"{ahora:%Y-%m-%d %H:%M}"
     cols_fuentes = list(fuentes[0])
@@ -996,8 +1267,8 @@ def main(argv=None):
         ("Fuentes", cols_fuentes, fuentes),
     ])
     guardar_csv(salida / "csv", tablas)
-    correos, revisar = lista_de_correos(cols_reps, sedes_ips)
-    cols_correos = ["Correo", "IPS", "NIT", "Es cooperativa", "Departamentos",
+    correos, revisar = lista_de_correos(cols_reps, sedes_ips, ranking)
+    cols_correos = ["Ranking tamaño", "Correo", "IPS", "NIT", "Es cooperativa", "Departamentos",
                     "Municipios", "Tipo de correo", "Observación"]
     ruta_correos = guardar_excel(salida / NOMBRE_CORREOS, [
         ("Correos", cols_correos, correos),

@@ -107,6 +107,53 @@ SOLIDARIAS = [
 ]
 
 
+# Mismo formato que la capacidad instalada real (s2ru-bqt6). El codigo de la
+# sede empieza por el codigo DANE de su municipio (sin el cero inicial).
+CAPACIDAD = [
+    ["Departamento", "Municipio", "Código prestador", "Nombre prestador", "nit IPS ",
+     "num digito_verificion", "naturaleza", "num nivel atencion", "Código sede",
+     "Número sede", "nom sede IPS", "nom grupo capacidad ",
+     "nom descripcion capacidad ", "num cantidad capacidad instalada", "Fecha Corte"],
+    ["Antioquia", "MEDELLÍN", "500100001", "CLINICA SAN JUAN SAS", "900111222", "1",
+     "Privada", "", "500100001", "01", "SEDE PRINCIPAL", "CAMAS", "Adultos", "100",
+     "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Antioquia", "MEDELLÍN", "500100001", "CLINICA SAN JUAN SAS", "900111222", "1",
+     "Privada", "", "500100001", "01", "SEDE PRINCIPAL", "SALAS", "Sala de Cirugía", "5",
+     "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Antioquia", "ENVIGADO", "500100001", "CLINICA SAN JUAN SAS", "900111222", "1",
+     "Privada", "", "526600001", "02", "SEDE ENVIGADO", "CONSULTORIOS",
+     "Consulta Externa", "20", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    # Davita: sillas de hemodialisis en Barranquilla y Cartagena; las de Cali
+    # no cuentan porque no estan en los departamentos.
+    ["Barranquilla", "BARRANQUILLA", "800103693", "DAVITA S.A.S.", "900532504", "4",
+     "Privada", "", "800103693", "01", "DAVITA BARRANQUILLA", "SILLAS",
+     "Sillas de Hemodiálisis", "40", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Cartagena", "CARTAGENA", "1300103270", "DAVITA S.A.S.", "900532504", "4",
+     "Privada", "", "1300103270", "01", "DAVITA CARTAGENA", "SILLAS",
+     "Sillas de Hemodiálisis", "20", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Cali", "CALI", "7600100001", "DAVITA S.A.S.", "900532504", "4",
+     "Privada", "", "7600100001", "01", "DAVITA CALI", "SILLAS",
+     "Sillas de Hemodiálisis", "500", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Bolívar", "CARTAGENA", "1300100007", "SERVISALUD BOLIVAR", "890123456", "7",
+     "Pública", "2", "1300100007", "01", "SERVISALUD", "CONSULTORIOS",
+     "Consulta Externa", "3", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+    ["Cundinamarca", "GIRARDOT", "2530700008", "COOPERATIVA DE SALUD DE GIRARDOT",
+     "900777888", "1", "Privada", "", "2530700008", "01", "COOPSALUD", "CAMAS",
+     "Pediátrica", "10", "Fecha corte REPS: Nov  5 2022  1:37PM"],
+]
+
+# Mismo formato que los estados financieros reales (tic6-rbue).
+ACTIVOS = [
+    ["AÑO", "MES", "CODIGO ENTIDAD", "NIT", "CODRENGLON", "NOMBRE CUENTA", "VALOR EN PESOS"],
+    ["2025", "DICIEMBRE", "1", "890-900-111-1", "100000", "ACTIVO", "$    4,000,000,000.00"],
+    ["2026", "JUNIO", "1", "890-900-111-1", "100000", "ACTIVO", "$    5,000,000,000.00"],
+    ["2026", "JULIO", "7", "800-100-500-5", "100000", "ACTIVO", "$    80,000,000,000.00"],
+    # Otra cuenta: no es el total de activos.
+    ["2026", "JULIO", "7", "800-100-500-5", "110000", "EFECTIVO", "$    999,000,000,000,000.00"],
+    ["2026", "JUNIO", "2", "800-100-600-6", "100000", "ACTIVO", "1.000.000"],
+]
+
+
 def escribir_csv(ruta, filas):
     with open(ruta, "w", encoding="utf-8", newline="") as archivo:
         csv.writer(archivo).writerows(filas)
@@ -137,6 +184,12 @@ class PruebasTexto(unittest.TestCase):
         con_bogota = bd.construir_objetivos(incluir_bogota=True)
         self.assertEqual(bd.departamento_de("BOGOTA DC", con_bogota), "BOGOTÁ D.C.")
         self.assertEqual(bd.departamento_de("11", con_bogota), "BOGOTÁ D.C.")
+
+    def test_a_numero(self):
+        casos = {"$    81,781,823,706.19": 81781823706.19, "1.000.000": 1000000,
+                 "0,00": 0, "$    - 0": 0, "12,5": 12.5, "": 0}
+        for valor, esperado in casos.items():
+            self.assertEqual(bd.a_numero(valor), esperado, valor)
 
     def test_normalizar_nit(self):
         for valor in ("890.123.456-7", "890-123-456-7", "8901234567", "890123456",
@@ -196,6 +249,8 @@ class PruebasTexto(unittest.TestCase):
         self.assertEqual(bd.clave_fecha("202608"), (2026, 8, 0))
         self.assertEqual(bd.clave_fecha("Fecha corte REPS: Mar 12 2026  3:11PM"),
                          (2026, 3, 12))
+        self.assertEqual(bd.clave_fecha("Fecha corte REPS: Nov  5 2022  1:37PM"),
+                         (2022, 11, 5))
         self.assertEqual(bd.restar_meses((2026, 7, 31), 12), (2025, 7, 31))
 
 
@@ -204,11 +259,15 @@ class PruebaCompleta(unittest.TestCase):
         carpeta = Path(self.enterContext(tempfile.TemporaryDirectory()))
         escribir_csv(carpeta / "reps.csv", REPS)
         escribir_csv(carpeta / "solidarias.csv", SOLIDARIAS)
+        escribir_csv(carpeta / "capacidad.csv", CAPACIDAD)
+        escribir_csv(carpeta / "activos.csv", ACTIVOS)
         salida = carpeta / "salida"
+        tamano = ["--archivo-capacidad", str(carpeta / "capacidad.csv"),
+                  "--archivo-activos", str(carpeta / "activos.csv")]
         with contextlib.redirect_stdout(io.StringIO()):
             codigo = bd.main(["--archivo-reps", str(carpeta / "reps.csv"),
                               "--archivo-solidarias", str(carpeta / "solidarias.csv"),
-                              "--salida", str(salida), *extra])
+                              "--salida", str(salida), *(extra or tamano)])
         self.assertEqual(codigo, 0)
         con = sqlite3.connect(salida / bd.NOMBRE_SQLITE)
         self.addCleanup(con.close)
@@ -264,8 +323,9 @@ class PruebaCompleta(unittest.TestCase):
             ("BOLÍVAR", "INSTITUTO DEL COOPERATIVISMO"),
         ])
         self.assertEqual(con.execute(
-            "SELECT corte_de_los_datos FROM fuentes ORDER BY dataset").fetchall(),
-            [("",), ("2026-07-31",)])
+            "SELECT dataset, corte_de_los_datos FROM fuentes ORDER BY dataset").fetchall(),
+            [("c36g-9fc2", ""), ("kg2d-yfyg", "2026-07-31"), ("s2ru-bqt6", "2022-11-05"),
+             ("tic6-rbue", "2026-07")])
 
     def test_resumen_y_archivos(self):
         salida, con = self.construir()
@@ -290,7 +350,7 @@ class PruebaCompleta(unittest.TestCase):
         self.assertEqual(hoja.max_row, 6)  # 5 IPS + encabezado
         self.assertEqual(hoja.freeze_panes, "A2")
         self.assertTrue(hoja.auto_filter.ref)
-        self.assertEqual(hoja["A1"].value, "bd_departamento")
+        self.assertEqual(hoja["A1"].value, "bd_ranking_tamano")
         self.assertTrue((salida / "csv" / "ips.csv").exists())
         correos = load_workbook(salida / bd.NOMBRE_CORREOS)
         self.assertEqual(correos.sheetnames,
@@ -348,8 +408,48 @@ class PruebaCompleta(unittest.TestCase):
                          [("IPS SIN CORREO", "www.ips.com", "NO"),
                           ("IPS SIN CORREO", "gerencia@ips", "NO")])
 
+    def test_orden_por_tamano(self):
+        salida, con = self.construir()
+        self.assertEqual(con.execute(
+            "SELECT bd_ranking_tamano, nombre_prestador, bd_capacidad_instalada, bd_camas, "
+            "bd_consultorios, bd_salas, bd_nivel_atencion FROM ips").fetchall(), [
+            (1, "CLINICA SAN JUAN SAS", 125, 100, 20, 5, ""),
+            (2, "DAVITA S.A.S.", 60, 0, 0, 0, ""),
+            (3, "COOPERATIVA DE SALUD DE GIRARDOT", 10, 10, 0, 0, ""),
+            (4, "SERVISALUD BOLIVAR", 3, 0, 3, 0, "2"),
+            (5, "IPS FRONTERA LTDA", "", "", "", "", ""),
+        ])
+        # Las sedes siguen el orden de su IPS.
+        self.assertEqual([n for (n,) in con.execute(
+            "SELECT DISTINCT nombre_prestador FROM ips_sedes")][:2],
+            ["CLINICA SAN JUAN SAS", "DAVITA S.A.S."])
+        self.assertEqual(con.execute(
+            "SELECT bd_ranking_tamano, nombreentidad, bd_activos_pesos, bd_fecha_activos "
+            "FROM cooperativas").fetchall(), [
+            (1, "COOPERATIVA DE TRABAJO ASOCIADO NORTE", 80000000000, "2026-07"),
+            (2, "COOPERATIVA ANTIOQUEÑA", 5000000000, "2026-06"),
+            (3, "COOPERATVA DE MILITARES", 1000000, "2026-06"),
+            (4, "COOPERATIVA INACTIVA", "", ""),
+            (5, "PRECOOPERATIVA DEL MAR", "", ""),
+        ])
+        from openpyxl import load_workbook
+        correos = load_workbook(salida / bd.NOMBRE_CORREOS)["Correos"]
+        self.assertEqual(correos["A1"].value, "Ranking tamaño")
+
+    def test_sin_datos_de_tamano(self):
+        # Si no hay capacidad ni activos, igual se arma la base: las IPS se
+        # ordenan por numero de sedes.
+        _, con = self.construir("--archivo-capacidad", "no_existe.csv",
+                                "--archivo-activos", "no_existe.csv")
+        self.assertEqual(con.execute(
+            "SELECT nombre_prestador, bd_num_sedes FROM ips "
+            "WHERE bd_ranking_tamano <= 2").fetchall(),
+            [("DAVITA S.A.S.", 3), ("CLINICA SAN JUAN SAS", 2)])
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM fuentes").fetchone(), (2,))
+
     def test_incluir_bogota(self):
-        _, con = self.construir("--incluir-bogota")
+        _, con = self.construir("--incluir-bogota", "--archivo-capacidad", "no_existe.csv",
+                                "--archivo-activos", "no_existe.csv")
         self.assertEqual(con.execute(
             "SELECT nombre_prestador FROM ips WHERE bd_departamento = 'BOGOTÁ D.C.' "
             "ORDER BY nombre_prestador").fetchall(),
